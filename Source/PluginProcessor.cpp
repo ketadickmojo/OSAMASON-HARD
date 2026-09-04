@@ -69,15 +69,15 @@ void VocalChainOneProcessor::updateAllStages()
     float space    = apvts.getRawParameterValue ("space")->load();
 
     for (auto& c : chains)
-    {
-        c.correctionEq.update (tone);
-        c.limiter.update (loudness);
-        c.eq7.update (tone);
-        c.compressor.update (punch);
-        c.soundgoodizer.update (loudness);
-        c.fastDist.update (grit);
-        c.freshAir.update (tone);
-    }
+{
+    c.correctionEq.update (tone);
+    c.limiter.update (loudness);
+    c.eq7.update (tone);
+    c.compressor.update (punch);
+    c.soundgoodizer.update (45.0f);
+    c.fastDist.update (grit);
+    c.freshAir.update (tone);
+}
 
     flangus.update (space);
     reverb.update (space);
