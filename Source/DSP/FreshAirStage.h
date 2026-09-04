@@ -49,7 +49,7 @@ public:
 private:
     double sampleRate = 44100.0;
     float lowAmount = 0.8f, highAmount = 0.8f;
-    using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
+    using juce::dsp::IIR::Filter<float>;
     Filter lowBandFilter, highBandFilter;
 
     static float exciter (float x)
