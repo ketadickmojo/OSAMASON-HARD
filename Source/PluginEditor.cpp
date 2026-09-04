@@ -18,11 +18,11 @@ namespace
 VocalChainOneEditor::VocalChainOneEditor (VocalChainOneProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
-    setupKnob (toneSlider,     toneLabel,     *this, "Теплее -- Ярче");
-    setupKnob (punchSlider,    punchLabel,    *this, "Сжатие вокала");
-    setupKnob (loudnessSlider, loudnessLabel, *this, "Громкость");
-    setupKnob (gritSlider,     gritLabel,     *this, "Грязь");
-    setupKnob (spaceSlider,    spaceLabel,    *this, "Пространство");
+    setupKnob (toneSlider,     toneLabel,     *this, "TEPLEE -- YARCHE");
+    setupKnob (punchSlider,    punchLabel,    *this, "COMPRESSION");
+    setupKnob (loudnessSlider, loudnessLabel, *this, "GROMKOST");
+    setupKnob (gritSlider,     gritLabel,     *this, "GRYAZ");
+    setupKnob (spaceSlider,    spaceLabel,    *this, "PROSTRANSTVO");
 
     auto& apvts = processor.apvts;
     toneAttach     = std::make_unique<Attachment> (apvts, "tone",     toneSlider);
