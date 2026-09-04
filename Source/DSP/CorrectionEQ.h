@@ -52,5 +52,5 @@ public:
 
 private:
     double sampleRate = 44100.0;
-    juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>> lowShelf, bell, highShelf;
+    juce::dsp::IIR::Filter<float> lowShelf, bell, highShelf;
 };
