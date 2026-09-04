@@ -1,0 +1,40 @@
+name: Build VocalChainOne on macOS
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure CMake for Apple Silicon
+        run: |
+          cmake -B build -G Xcode \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: |
+          cmake --build build \
+            --config Release \
+            --parallel
+
+      - name: Verify architecture
+        run: |
+          file build/VocalChainOne_artefacts/Release/VST3/VocalChainOne.vst3/Contents/MacOS/VocalChainOne
+
+      - name: Package VST3
+        run: |
+          mkdir -p out
+          cp -R build/VocalChainOne_artefacts/Release/VST3/VocalChainOne.vst3 out/
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalChainOne-macOS-arm64
+          path: out/
