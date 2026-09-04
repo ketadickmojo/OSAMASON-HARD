@@ -65,7 +65,7 @@ public:
 
 private:
     double sampleRate = 44100.0;
-    using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
+    using Filter = juce::dsp::IIR::Filter<float>;
     Filter band1, band2, band3, band4, band5, band6, band7;
     Filter* bands[7] = { &band1, &band2, &band3, &band4, &band5, &band6, &band7 };
 };
