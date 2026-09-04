@@ -1,60 +1,178 @@
 #pragma once
+
 #include <juce_dsp/juce_dsp.h>
+#include <array>
 #include <cmath>
 
 /**
-    FreshAirStage — эмуляция Fresh Air (Slate Digital): два "воздушных" эксайтера --
-    Low (презенс, ~3-6kHz) и High (эйр, ~10-16kHz), оба гармонически насыщают
-    высокочастотный контент и подмешивают обратно как высокочастотный шельф.
+    FreshAirStage
 
-    Пользователь задал оба параметра на +8 (из 10) -- берём как базу.
-    tone (-50..+50, общая крутилка "Теплее -- Ярче") слегка сдвигает баланс:
-    ярче -> оба чуть сильнее, теплее -> оба чуть слабее.
+    Эмуляция воздушного эксайтера:
+    - Low band: ~3.5 kHz+
+    - High band: ~10 kHz+
+
+    Базовые значения:
+    Low  = +8 / 10
+    High = +8 / 10
+
+    tone:
+    -50 = теплее
+    +50 = ярче
+
+    Важно:
+    Каждый канал имеет собственное состояние IIR-фильтра.
 */
+
 class FreshAirStage
 {
 public:
+
     void prepare (const juce::dsp::ProcessSpec& spec)
     {
         sampleRate = spec.sampleRate;
-        lowBandFilter.prepare (spec);
-        highBandFilter.prepare (spec);
-        *lowBandFilter.state  = *juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 3500.0f, 0.7f);
-        *highBandFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 10000.0f, 0.7f);
+
+        for (auto& filter : lowBandFilter)
+            filter.prepare (spec);
+
+        for (auto& filter : highBandFilter)
+            filter.prepare (spec);
+
+        auto lowCoefficients =
+            juce::dsp::IIR::Coefficients<float>::makeHighPass (
+                sampleRate,
+                3500.0f,
+                0.7f
+            );
+
+        auto highCoefficients =
+            juce::dsp::IIR::Coefficients<float>::makeHighPass (
+                sampleRate,
+                10000.0f,
+                0.7f
+            );
+
+        for (auto& filter : lowBandFilter)
+            filter.coefficients = lowCoefficients;
+
+        for (auto& filter : highBandFilter)
+            filter.coefficients = highCoefficients;
+
         update (0.0f);
     }
 
-    void reset() { lowBandFilter.reset(); highBandFilter.reset(); }
 
+    void reset()
+    {
+        for (auto& filter : lowBandFilter)
+            filter.reset();
+
+        for (auto& filter : highBandFilter)
+            filter.reset();
+    }
+
+
+    /**
+        tone: -50..+50
+
+        -50 = теплее
+        +50 = ярче
+    */
     void update (float tone)
     {
-        float t = juce::jlimit (-1.0f, 1.0f, tone / 50.0f);
-        // база +8 из 10 = 0.8, диапазон эффекта модулируем tone на +-0.15
-        lowAmount  = juce::jlimit (0.0f, 1.0f, 0.8f + t * 0.15f);
-        highAmount = juce::jlimit (0.0f, 1.0f, 0.8f + t * 0.15f);
+        const float t =
+            juce::jlimit (-1.0f, 1.0f, tone / 50.0f);
+
+        // База +8 из 10
+        //
+        // Теплее:
+        // немного уменьшаем эксайтер
+        //
+        // Ярче:
+        // немного увеличиваем
+
+        lowAmount =
+            juce::jlimit (
+                0.0f,
+                1.0f,
+                0.8f + t * 0.15f
+            );
+
+        highAmount =
+            juce::jlimit (
+                0.0f,
+                1.0f,
+                0.8f + t * 0.15f
+            );
     }
+
 
     float processSample (int channel, float x)
     {
-        float lowBand  = lowBandFilter.processSample (channel, x);
-        float highBand = highBandFilter.processSample (channel, x);
+        // Поддерживаем stereo L/R.
+        const int ch = juce::jlimit (0, 1, channel);
 
-        // Гармоническая генерация (чётные+нечётные через asymmetric soft-clip) на каждой полосе
-        float lowHarm  = exciter (lowBand)  * lowAmount  * 0.6f;
-        float highHarm = exciter (highBand) * highAmount * 0.6f;
+        // Выделяем верхнюю часть спектра.
+        const float lowBand =
+            lowBandFilter[ch].processSample (x);
 
-        return x + lowHarm + highHarm;
+        const float highBand =
+            highBandFilter[ch].processSample (x);
+
+        // Гармоническое насыщение.
+        const float lowHarmonics =
+            exciter (lowBand)
+            * lowAmount
+            * 0.6f;
+
+        const float highHarmonics =
+            exciter (highBand)
+            * highAmount
+            * 0.6f;
+
+        // Подмешиваем обратно к исходному сигналу.
+        return x
+            + lowHarmonics
+            + highHarmonics;
     }
 
-private:
-    double sampleRate = 44100.0;
-    float lowAmount = 0.8f, highAmount = 0.8f;
-    using juce::dsp::IIR::Filter<float>;
-    Filter lowBandFilter, highBandFilter;
 
+private:
+
+    double sampleRate = 44100.0;
+
+    float lowAmount  = 0.8f;
+    float highAmount = 0.8f;
+
+
+    // Отдельное состояние фильтра для L и R.
+    std::array<
+        juce::dsp::IIR::Filter<float>,
+        2
+    > lowBandFilter;
+
+
+    std::array<
+        juce::dsp::IIR::Filter<float>,
+        2
+    > highBandFilter;
+
+
+    /**
+        Ассиметричная сатурация.
+
+        Создаёт дополнительные гармоники,
+        что даёт эффект "air / presence".
+    */
     static float exciter (float x)
     {
-        // Ассиметричная сатурация -- добавляет чётные гармоники (воздух/блеск)
-        return std::tanh (x * 3.0f) - 0.3f * std::tanh (x * x * 3.0f) * (x < 0 ? -1.0f : 1.0f);
+        const float positive =
+            std::tanh (x * 3.0f);
+
+        const float asymmetric =
+            0.3f
+            * std::tanh (x * x * 3.0f)
+            * (x < 0.0f ? -1.0f : 1.0f);
+
+        return positive - asymmetric;
     }
 };
