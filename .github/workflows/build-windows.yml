@@ -1,0 +1,57 @@
+name: Build VocalChainOne on Windows
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build Release
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Verify VST3
+        shell: pwsh
+        run: |
+          $plugin = "build/VocalChainOne_artefacts/Release/VST3/VocalChainOne.vst3"
+          
+          if (!(Test-Path $plugin)) {
+            Write-Error "VocalChainOne.vst3 was not found!"
+            exit 1
+          }
+
+          Write-Host "VST3 found:"
+          Get-ChildItem $plugin -Recurse
+
+      - name: Package VST3
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item `
+            -Path "build/VocalChainOne_artefacts/Release/VST3/VocalChainOne.vst3" `
+            -Destination "out/VocalChainOne.vst3" `
+            -Recurse
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "out/VocalChainOne.vst3" `
+            -DestinationPath "VocalChainOne-Windows-x64.zip" `
+            -Force
+
+      - name: Upload Windows VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalChainOne-Windows-x64
+          path: VocalChainOne-Windows-x64.zip
