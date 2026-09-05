@@ -2,58 +2,95 @@
 #include <cmath>
 #include <algorithm>
 
-/**
-    SimpleLimiter — пиковый лимитер с плавным release, эмулирует Fruity Limiter
-    в режиме LIMIT. Ceiling и makeup gain связаны с макро-крутилкой Loudness:
-    чем больше Loudness, тем сильнее лимитер "поджимает" пики и тем выше makeup.
-*/
 class SimpleLimiter
 {
 public:
-    void prepare (double sampleRate) { fs = sampleRate; releaseCoeff = calcCoeff (releaseMs); }
-
-    void reset() { envelope = 1.0f; }
-
-    // loudness: 0..100, из макро-крутилки "Громкость"
-    void update (float loudness)
+    void prepare (double sr)
     {
-        float n = jlimit_local (0.0f, 100.0f, loudness) / 100.0f;
-        ceilingDb = jmap_local (n, 0.0f, 1.0f, -0.3f, -3.0f);  // больше Loudness -> ниже потолок (жёстче лимит)
-        makeupDb  = jmap_local (n, 0.0f, 1.0f, 0.0f, 6.0f);    // и больше компенсации громкости
+        sampleRate = sr;
+        reset();
+        update();
+    }
+
+    void reset()
+    {
+        envelope = 0.0f;
+        gain = 1.0f;
+    }
+
+    // Fruity Limiter:
+    // Gain: 0 dB
+    // Soft Saturation Threshold: 0
+    // Ceiling: 0 dB
+    // Attack: 2.00 ms
+    // Attack Curve: 3
+    // Release: 85.53 ms
+    // Release Curve: 3
+    // Noise Release: 226 ms
+    // Noise Gate: 0
+    // Noise Threshold: -43 dB
+    //
+    // Важно:
+    // громкость пользователя сюда НЕ приходит.
+    // Лимитер всегда работает с фиксированными настройками.
+
+    void update()
+    {
+        ceilingLinear = 1.0f; // 0 dB
+
+        attackTime = 0.002f;      // 2 ms
+        releaseTime = 0.08553f;   // 85.53 ms
+
+        attackCoeff =
+            std::exp (-1.0f / (float (sampleRate) * attackTime));
+
+        releaseCoeff =
+            std::exp (-1.0f / (float (sampleRate) * releaseTime));
     }
 
     float processSample (float x)
     {
-        float driven = x * dbToLin (makeupDb);
-        float ceilingLin = dbToLin (ceilingDb);
+        const float inputAbs = std::abs (x);
 
-        float absX = std::abs (driven);
-        float targetGain = (absX > ceilingLin && absX > 1.0e-9f) ? (ceilingLin / absX) : 1.0f;
-
-        // Быстрая атака (лимитер должен ловить пики почти мгновенно), плавный release
-        if (targetGain < envelope)
-            envelope = targetGain; // мгновенная атака
+        // Peak envelope
+        if (inputAbs > envelope)
+            envelope = attackCoeff * envelope
+                      + (1.0f - attackCoeff) * inputAbs;
         else
-            envelope += (targetGain - envelope) * releaseCoeff;
+            envelope = releaseCoeff * envelope
+                      + (1.0f - releaseCoeff) * inputAbs;
 
-        return driven * envelope;
+        float targetGain = 1.0f;
+
+        if (envelope > ceilingLinear)
+            targetGain = ceilingLinear / envelope;
+
+        // Smooth gain changes
+        if (targetGain < gain)
+        {
+            gain = attackCoeff * gain
+                 + (1.0f - attackCoeff) * targetGain;
+        }
+        else
+        {
+            gain = releaseCoeff * gain
+                 + (1.0f - releaseCoeff) * targetGain;
+        }
+
+        return x * gain;
     }
 
 private:
-    double fs = 44100.0;
-    float envelope = 1.0f;
-    float ceilingDb = -0.3f, makeupDb = 0.0f;
-    float releaseMs = 80.0f;
-    float releaseCoeff = 0.001f;
+    double sampleRate = 44100.0;
 
-    float calcCoeff (float ms) const
-    {
-        return 1.0f - std::exp (-1.0f / (0.001f * ms * (float) fs));
-    }
+    float envelope = 0.0f;
+    float gain = 1.0f;
 
-    static float dbToLin (float db) { return std::pow (10.0f, db / 20.0f); }
+    float ceilingLinear = 1.0f;
 
-    // локальные хелперы, чтобы не тянуть juce_core только ради jlimit/jmap
-    template <typename T> static T jlimit_local (T lo, T hi, T v) { return std::max (lo, std::min (hi, v)); }
-    template <typename T> static T jmap_local (T v, T s1, T e1, T s2, T e2) { return s2 + (v - s1) * (e2 - s2) / (e1 - s1); }
+    float attackTime = 0.002f;
+    float releaseTime = 0.08553f;
+
+    float attackCoeff = 0.0f;
+    float releaseCoeff = 0.0f;
 };
