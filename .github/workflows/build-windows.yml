@@ -14,7 +14,7 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake -B build -G "Visual Studio 17 2022" -A x64
+          cmake -B build
 
       - name: Build Release
         run: |
@@ -24,19 +24,19 @@ jobs:
         shell: pwsh
         run: |
           $plugin = "build/VocalChainOne_artefacts/Release/VST3/VocalChainOne.vst3"
-          
+
           if (!(Test-Path $plugin)) {
             Write-Error "VocalChainOne.vst3 was not found!"
             exit 1
           }
 
-          Write-Host "VST3 found:"
-          Get-ChildItem $plugin -Recurse
+          Write-Host "VocalChainOne.vst3 found successfully."
 
       - name: Package VST3
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
+
           Copy-Item `
             -Path "build/VocalChainOne_artefacts/Release/VST3/VocalChainOne.vst3" `
             -Destination "out/VocalChainOne.vst3" `
