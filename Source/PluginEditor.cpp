@@ -1,394 +1,368 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-VocalChainOneProcessor::VocalChainOneProcessor()
-    : AudioProcessor (BusesProperties()
-                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "PARAMS", createLayout())
+VocalChainOneEditor::VocalChainOneEditor (VocalChainOneProcessor& p)
+    : AudioProcessorEditor (&p),
+      processor (p)
 {
+    // =========================================================
+    // KNOBS
+    // =========================================================
+
+    toneSlider.setSliderStyle (
+        juce::Slider::RotaryHorizontalVerticalDrag);
+
+    toneSlider.setTextBoxStyle (
+        juce::Slider::TextBoxBelow,
+        false,
+        70,
+        20);
+
+    toneSlider.setRange (
+        -50.0,
+        50.0,
+        0.1);
+
+    toneSlider.setValue (
+        0.0,
+        juce::dontSendNotification);
+
+    addAndMakeVisible (toneSlider);
+
+    punchSlider.setSliderStyle (
+        juce::Slider::RotaryHorizontalVerticalDrag);
+
+    punchSlider.setTextBoxStyle (
+        juce::Slider::TextBoxBelow,
+        false,
+        70,
+        20);
+
+    punchSlider.setRange (
+        0.0,
+        100.0,
+        0.1);
+
+    punchSlider.setValue (
+        70.0,
+        juce::dontSendNotification);
+
+    addAndMakeVisible (punchSlider);
+
+    loudnessSlider.setSliderStyle (
+        juce::Slider::RotaryHorizontalVerticalDrag);
+
+    loudnessSlider.setTextBoxStyle (
+        juce::Slider::TextBoxBelow,
+        false,
+        70,
+        20);
+
+    loudnessSlider.setRange (
+        0.0,
+        100.0,
+        0.1);
+
+    // Центр = 50 = 0 dB
+    loudnessSlider.setValue (
+        50.0,
+        juce::dontSendNotification);
+
+    addAndMakeVisible (loudnessSlider);
+
+    gritSlider.setSliderStyle (
+        juce::Slider::RotaryHorizontalVerticalDrag);
+
+    gritSlider.setTextBoxStyle (
+        juce::Slider::TextBoxBelow,
+        false,
+        70,
+        20);
+
+    gritSlider.setRange (
+        0.0,
+        100.0,
+        0.1);
+
+    gritSlider.setValue (
+        40.0,
+        juce::dontSendNotification);
+
+    addAndMakeVisible (gritSlider);
+
+    spaceSlider.setSliderStyle (
+        juce::Slider::RotaryHorizontalVerticalDrag);
+
+    spaceSlider.setTextBoxStyle (
+        juce::Slider::TextBoxBelow,
+        false,
+        70,
+        20);
+
+    spaceSlider.setRange (
+        0.0,
+        100.0,
+        0.1);
+
+    spaceSlider.setValue (
+        45.0,
+        juce::dontSendNotification);
+
+    addAndMakeVisible (spaceSlider);
+
+    // =========================================================
+    // LABELS
+    // =========================================================
+
+    toneLabel.setText (
+        "TEPLEE -- YARCHE",
+        juce::dontSendNotification);
+
+    toneLabel.setJustificationType (
+        juce::Justification::centred);
+
+    addAndMakeVisible (toneLabel);
+
+    punchLabel.setText (
+        "COMPRESSION",
+        juce::dontSendNotification);
+
+    punchLabel.setJustificationType (
+        juce::Justification::centred);
+
+    addAndMakeVisible (punchLabel);
+
+    loudnessLabel.setText (
+        "LOUDNESS",
+        juce::dontSendNotification);
+
+    loudnessLabel.setJustificationType (
+        juce::Justification::centred);
+
+    addAndMakeVisible (loudnessLabel);
+
+    gritLabel.setText (
+        "GRIT",
+        juce::dontSendNotification);
+
+    gritLabel.setJustificationType (
+        juce::Justification::centred);
+
+    addAndMakeVisible (gritLabel);
+
+    spaceLabel.setText (
+        "SPACE",
+        juce::dontSendNotification);
+
+    spaceLabel.setJustificationType (
+        juce::Justification::centred);
+
+    addAndMakeVisible (spaceLabel);
+
+    // =========================================================
+    // PARAMETER ATTACHMENTS
+    // =========================================================
+
+    toneAttach =
+        std::make_unique<Attachment> (
+            processor.apvts,
+            "tone",
+            toneSlider);
+
+    punchAttach =
+        std::make_unique<Attachment> (
+            processor.apvts,
+            "punch",
+            punchSlider);
+
+    loudnessAttach =
+        std::make_unique<Attachment> (
+            processor.apvts,
+            "loudness",
+            loudnessSlider);
+
+    gritAttach =
+        std::make_unique<Attachment> (
+            processor.apvts,
+            "grit",
+            gritSlider);
+
+    spaceAttach =
+        std::make_unique<Attachment> (
+            processor.apvts,
+            "space",
+            spaceSlider);
+
+    // =========================================================
+    // WINDOW
+    // =========================================================
+
+    setSize (
+        700,
+        300);
+
+    setResizable (
+        false,
+        false);
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout VocalChainOneProcessor::createLayout()
+void VocalChainOneEditor::paint (
+    juce::Graphics& g)
 {
-    using namespace juce;
+    // =========================================================
+    // BACKGROUND
+    // =========================================================
 
-    std::vector<std::unique_ptr<RangedAudioParameter>> params;
+    g.fillAll (
+        juce::Colour (18, 18, 18));
 
-    // Теплее -- Ярче
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "tone", 1 },
-        "Теплее -- Ярче",
-        NormalisableRange<float> (-50.0f, 50.0f, 0.1f),
-        0.0f));
+    // =========================================================
+    // TITLE
+    // =========================================================
 
-    // Сжатие вокала
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "punch", 1 },
-        "Сжатие вокала",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        70.0f));
+    g.setColour (
+        juce::Colours::white);
 
-    // Громкость:
-    // 0   = -6 dB
-    // 50  =  0 dB
-    // 100 = +6 dB
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "loudness", 1 },
-        "Громкость",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        50.0f));
+    g.setFont (
+        24.0f);
 
-    // Грязь
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "grit", 1 },
-        "Грязь",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        40.0f));
+    g.drawFittedText (
+        "VOCAL CHAIN ONE",
+        0,
+        15,
+        getWidth(),
+        35,
+        juce::Justification::centred,
+        1);
 
-    // Пространство
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "space", 1 },
-        "Пространство",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        45.0f));
+    // =========================================================
+    // SUBTITLE
+    // =========================================================
 
-    return { params.begin(), params.end() };
+    g.setColour (
+        juce::Colours::lightgrey);
+
+    g.setFont (
+        12.0f);
+
+    g.drawFittedText (
+        "VOCAL PROCESSING",
+        0,
+        48,
+        getWidth(),
+        20,
+        juce::Justification::centred,
+        1);
 }
 
-void VocalChainOneProcessor::prepareToPlay (double sampleRate,
-                                            int samplesPerBlock)
+void VocalChainOneEditor::resized()
 {
-    currentSampleRate = sampleRate;
-
-    juce::dsp::ProcessSpec spec
-    {
-        sampleRate,
-        (juce::uint32) samplesPerBlock,
-        1
-    };
-
-    for (auto& c : chains)
-    {
-        // 1. Correction EQ
-        c.correctionEq.prepare (spec);
-
-        // 2. Fruity Limiter
-        c.limiter.prepare (sampleRate);
-
-        // 3. Parametric EQ 2
-        c.eq7.prepare (spec);
-
-        // 4. Fruity Compressor
-        c.compressor.prepare (sampleRate);
-
-        // 5. Soundgoodizer C
-        c.soundgoodizer.prepare (sampleRate);
-
-        // 6. Fast Dist
-        c.fastDist.prepare (sampleRate);
-
-        // 7. Fresh Air
-        c.freshAir.prepare (spec);
-    }
-
-    juce::dsp::ProcessSpec stereoSpec
-    {
-        sampleRate,
-        (juce::uint32) samplesPerBlock,
-        2
-    };
-
-    // 8. Flangus
-    flangus.prepare (stereoSpec);
-
-    // 9. Reverb
-    reverb.prepare (stereoSpec);
-
-    updateAllStages();
-}
-
-void VocalChainOneProcessor::updateAllStages()
-{
-    const float tone =
-        apvts.getRawParameterValue ("tone")->load();
-
-    const float punch =
-        apvts.getRawParameterValue ("punch")->load();
-
-    const float loudness =
-        apvts.getRawParameterValue ("loudness")->load();
-
-    const float grit =
-        apvts.getRawParameterValue ("grit")->load();
-
-    const float space =
-        apvts.getRawParameterValue ("space")->load();
-
     // =========================================================
-    // 1-7. MONO / PER-CHANNEL CHAIN
+    // LAYOUT
     // =========================================================
 
-    for (auto& c : chains)
-    {
-        // 1. Initial Correction EQ
-        c.correctionEq.update (tone);
+    const int knobSize = 100;
+    const int spacing = 30;
 
-        // 2. Fruity Limiter
-        //
-        // ВАЖНО:
-        // громкость сюда НЕ передаём.
-        // Лимитер полностью фиксированный.
-        c.limiter.update();
+    const int totalWidth =
+        knobSize * 5
+        + spacing * 4;
 
-        // 3. Fruity Parametric EQ 2
-        c.eq7.update (tone);
+    const int startX =
+        (getWidth() - totalWidth) / 2;
 
-        // 4. Fruity Compressor
-        c.compressor.update (punch);
-
-        // 5. Soundgoodizer
-        //
-        // Фиксированно:
-        // Mode C
-        // Amount 45%
-        // Wet 100%
-        //
-        // Никакого пользовательского knob для него нет.
-        c.soundgoodizer.update (45.0f);
-
-        // 6. Fast Dist
-        c.fastDist.update (grit);
-
-        // 7. Fresh Air
-        c.freshAir.update (tone);
-    }
+    const int knobY = 95;
+    const int labelY = 215;
 
     // =========================================================
-    // 8-9. STEREO EFFECTS
+    // TONE
     // =========================================================
 
-    flangus.update (space);
-    reverb.update (space);
+    toneSlider.setBounds (
+        startX,
+        knobY,
+        knobSize,
+        knobSize);
 
-    // loudness здесь специально НЕ используется.
-}
-
-bool VocalChainOneProcessor::isBusesLayoutSupported (
-    const BusesLayout& layouts) const
-{
-    return layouts.getMainOutputChannelSet()
-                == juce::AudioChannelSet::stereo()
-        && layouts.getMainInputChannelSet()
-                == juce::AudioChannelSet::stereo();
-}
-
-void VocalChainOneProcessor::processBlock (
-    juce::AudioBuffer<float>& buffer,
-    juce::MidiBuffer&)
-{
-    juce::ScopedNoDenormals noDenormals;
-
-    updateAllStages();
-
-    const int numSamples =
-        buffer.getNumSamples();
-
-    auto* left =
-        buffer.getWritePointer (0);
-
-    auto* right =
-        buffer.getNumChannels() > 1
-            ? buffer.getWritePointer (1)
-            : nullptr;
+    toneLabel.setBounds (
+        startX - 15,
+        labelY,
+        knobSize + 30,
+        25);
 
     // =========================================================
-    // 1-7. ОСНОВНАЯ ЦЕПОЧКА
+    // COMPRESSION
     // =========================================================
 
-    for (int i = 0; i < numSamples; ++i)
-    {
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            float* samplePtr =
-                (ch == 0)
-                    ? &left[i]
-                    : (right != nullptr
-                        ? &right[i]
-                        : &left[i]);
+    const int punchX =
+        startX + (knobSize + spacing);
 
-            float x = *samplePtr;
+    punchSlider.setBounds (
+        punchX,
+        knobY,
+        knobSize,
+        knobSize);
 
-            // 1. Correction EQ
-            x = chains[ch].correctionEq.processSample (0, x);
-
-            // 2. Fruity Limiter
-            x = chains[ch].limiter.processSample (x);
-
-            // 3. Parametric EQ 2
-            x = chains[ch].eq7.processSample (0, x);
-
-            // 4. Fruity Compressor
-            x = chains[ch].compressor.processSample (x);
-
-            // 5. Soundgoodizer C
-            x = chains[ch].soundgoodizer.processSample (x);
-
-            // 6. Fast Dist
-            x = chains[ch].fastDist.processSample (x);
-
-            // 7. Fresh Air
-            x = chains[ch].freshAir.processSample (0, x);
-
-            *samplePtr = x;
-        }
-    }
+    punchLabel.setBounds (
+        punchX - 15,
+        labelY,
+        knobSize + 30,
+        25);
 
     // =========================================================
-    // 8. FLANGUS
+    // LOUDNESS
     // =========================================================
 
-    {
-        juce::AudioBuffer<float> dryCopy;
-        dryCopy.makeCopyOf (buffer, true);
+    const int loudnessX =
+        startX + 2 * (knobSize + spacing);
 
-        juce::dsp::AudioBlock<float> block (buffer);
+    loudnessSlider.setBounds (
+        loudnessX,
+        knobY,
+        knobSize,
+        knobSize);
 
-        flangus.process (block);
-
-        for (int ch = 0;
-             ch < buffer.getNumChannels();
-             ++ch)
-        {
-            auto* wet =
-                buffer.getWritePointer (ch);
-
-            auto* dry =
-                dryCopy.getWritePointer (ch);
-
-            for (int i = 0;
-                 i < numSamples;
-                 ++i)
-            {
-                wet[i] =
-                    dry[i] * (1.0f - FlangusStage::kWetFixed)
-                    + wet[i] * FlangusStage::kWetFixed;
-            }
-        }
-    }
+    loudnessLabel.setBounds (
+        loudnessX - 15,
+        labelY,
+        knobSize + 30,
+        25);
 
     // =========================================================
-    // 9. REVERB
+    // GRIT
     // =========================================================
 
-    {
-        juce::AudioBuffer<float> dryCopy;
-        dryCopy.makeCopyOf (buffer, true);
+    const int gritX =
+        startX + 3 * (knobSize + spacing);
 
-        juce::dsp::AudioBlock<float> block (buffer);
+    gritSlider.setBounds (
+        gritX,
+        knobY,
+        knobSize,
+        knobSize);
 
-        reverb.process (block);
-
-        for (int ch = 0;
-             ch < buffer.getNumChannels();
-             ++ch)
-        {
-            auto* wet =
-                buffer.getWritePointer (ch);
-
-            auto* dry =
-                dryCopy.getWritePointer (ch);
-
-            for (int i = 0;
-                 i < numSamples;
-                 ++i)
-            {
-                wet[i] =
-                    dry[i] * (1.0f - ReverbStage::kWetFixed)
-                    + wet[i] * ReverbStage::kWetFixed;
-            }
-        }
-    }
+    gritLabel.setBounds (
+        gritX - 15,
+        labelY,
+        knobSize + 30,
+        25);
 
     // =========================================================
-    // FINAL LOUDNESS
+    // SPACE
     // =========================================================
-    //
-    // Это САМОЕ ВАЖНОЕ.
-    //
-    // Loudness применяется ПОСЛЕ ВСЕЙ ЦЕПОЧКИ.
-    //
-    // 0   -> -6 dB
-    // 50  ->  0 dB
-    // 100 -> +6 dB
-    //
-    // Он НЕ меняет:
-    // - Limiter
-    // - Compressor
-    // - Soundgoodizer
-    // - Fast Dist
-    // - EQ
-    // - Flangus
-    // - Reverb
-    //
-    // Поэтому при увеличении LOUDNESS
-    // характер обработки не меняется.
-    //
 
-    const float loudness =
-        apvts.getRawParameterValue ("loudness")->load();
+    const int spaceX =
+        startX + 4 * (knobSize + spacing);
 
-    const float outputGainDb =
-        juce::jmap (loudness,
-                    0.0f, 100.0f,
-                    -6.0f, 6.0f);
+    spaceSlider.setBounds (
+        spaceX,
+        knobY,
+        knobSize,
+        knobSize);
 
-    const float outputGain =
-        juce::Decibels::decibelsToGain (
-            outputGainDb);
-
-    buffer.applyGain (outputGain);
-}
-
-juce::AudioProcessorEditor*
-VocalChainOneProcessor::createEditor()
-{
-    return new VocalChainOneEditor (*this);
-}
-
-void VocalChainOneProcessor::getStateInformation (
-    juce::MemoryBlock& destData)
-{
-    if (auto state = apvts.copyState();
-        state.isValid())
-    {
-        std::unique_ptr<juce::XmlElement> xml (
-            state.createXml());
-
-        copyXmlToBinary (*xml, destData);
-    }
-}
-
-void VocalChainOneProcessor::setStateInformation (
-    const void* data,
-    int sizeInBytes)
-{
-    std::unique_ptr<juce::XmlElement> xml (
-        getXmlFromBinary (
-            data,
-            sizeInBytes));
-
-    if (xml != nullptr
-        && xml->hasTagName (
-            apvts.state.getType()))
-    {
-        apvts.replaceState (
-            juce::ValueTree::fromXml (*xml));
-    }
-}
-
-juce::AudioProcessor*
-JUCE_CALLTYPE createPluginFilter()
-{
-    return new VocalChainOneProcessor();
+    spaceLabel.setBounds (
+        spaceX - 15,
+        labelY,
+        knobSize + 30,
+        25);
 }
