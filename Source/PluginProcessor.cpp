@@ -12,6 +12,7 @@ VocalChainOneProcessor::VocalChainOneProcessor()
 juce::AudioProcessorValueTreeState::ParameterLayout VocalChainOneProcessor::createLayout()
 {
     using namespace juce;
+
     std::vector<std::unique_ptr<RangedAudioParameter>> params;
 
     params.push_back (std::make_unique<AudioParameterFloat>(
@@ -22,9 +23,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalChainOneProcessor::crea
         ParameterID { "punch", 1 }, "Сжатие вокала",
         NormalisableRange<float> (0.0f, 100.0f, 0.1f), 70.0f));
 
+    // 0 = -6 dB
+    // 50 =  0 dB
+    // 100 = +6 dB
     params.push_back (std::make_unique<AudioParameterFloat>(
         ParameterID { "loudness", 1 }, "Громкость",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f), 80.0f));
+        NormalisableRange<float> (0.0f, 100.0f, 0.1f), 50.0f));
 
     params.push_back (std::make_unique<AudioParameterFloat>(
         ParameterID { "grit", 1 }, "Грязь",
@@ -40,7 +44,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalChainOneProcessor::crea
 void VocalChainOneProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
-    juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) samplesPerBlock, 1 }; // per-channel spec (numChannels=1 для per-channel цепей)
+
+    juce::dsp::ProcessSpec spec {
+        sampleRate,
+        (juce::uint32) samplesPerBlock,
+        1
+    };
 
     for (auto& c : chains)
     {
@@ -53,7 +62,12 @@ void VocalChainOneProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
         c.freshAir.prepare (spec);
     }
 
-    juce::dsp::ProcessSpec stereoSpec { sampleRate, (juce::uint32) samplesPerBlock, 2 };
+    juce::dsp::ProcessSpec stereoSpec {
+        sampleRate,
+        (juce::uint32) samplesPerBlock,
+        2
+    };
+
     flangus.prepare (stereoSpec);
     reverb.prepare (stereoSpec);
 
@@ -62,22 +76,40 @@ void VocalChainOneProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 
 void VocalChainOneProcessor::updateAllStages()
 {
-    float tone     = apvts.getRawParameterValue ("tone")->load();
-    float punch    = apvts.getRawParameterValue ("punch")->load();
-    float loudness = apvts.getRawParameterValue ("loudness")->load();
-    float grit     = apvts.getRawParameterValue ("grit")->load();
-    float space    = apvts.getRawParameterValue ("space")->load();
+    const float tone =
+        apvts.getRawParameterValue ("tone")->load();
+
+    const float punch =
+        apvts.getRawParameterValue ("punch")->load();
+
+    const float loudness =
+        apvts.getRawParameterValue ("loudness")->load();
+
+    const float grit =
+        apvts.getRawParameterValue ("grit")->load();
+
+    const float space =
+        apvts.getRawParameterValue ("space")->load();
 
     for (auto& c : chains)
-{
-    c.correctionEq.update (tone);
-    c.limiter.update (loudness);
-    c.eq7.update (tone);
-    c.compressor.update (punch);
-    c.soundgoodizer.update (45.0f);
-    c.fastDist.update (grit);
-    c.freshAir.update (tone);
-}
+    {
+        c.correctionEq.update (tone);
+
+        // Limiter НЕ зависит от LOUDNESS.
+        // Его текущие настройки остаются фиксированными.
+        c.limiter.update (0.0f);
+
+        c.eq7.update (tone);
+
+        c.compressor.update (punch);
+
+        // Soundgoodizer: фиксированный Amount 45%.
+        // LOUDNESS на него не влияет.
+        c.soundgoodizer.update (45.0f);
+
+        c.fastDist.update (grit);
+        c.freshAir.update (tone);
+    }
 
     flangus.update (space);
     reverb.update (space);
@@ -89,21 +121,41 @@ bool VocalChainOneProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
         && layouts.getMainInputChannelSet()  == juce::AudioChannelSet::stereo();
 }
 
-void VocalChainOneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void VocalChainOneProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+                                           juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+
     updateAllStages();
 
     const int numSamples = buffer.getNumSamples();
-    auto* left  = buffer.getWritePointer (0);
-    auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
 
-    // Шаги 1-7 (CorrectionEQ .. FreshAir) -- поканально, простая обработка сэмпл-за-сэмплом
+    auto* left = buffer.getWritePointer (0);
+    auto* right =
+        buffer.getNumChannels() > 1
+        ? buffer.getWritePointer (1)
+        : nullptr;
+
+    // =========================================================
+    // ШАГИ 1-7
+    // Correction EQ
+    // Limiter
+    // EQ7
+    // Compressor
+    // Soundgoodizer
+    // Fast Dist
+    // Fresh Air
+    // =========================================================
+
     for (int i = 0; i < numSamples; ++i)
     {
         for (int ch = 0; ch < 2; ++ch)
         {
-            float* samplePtr = (ch == 0) ? &left[i] : (right != nullptr ? &right[i] : &left[i]);
+            float* samplePtr =
+                (ch == 0)
+                ? &left[i]
+                : (right != nullptr ? &right[i] : &left[i]);
+
             float x = *samplePtr;
 
             x = chains[ch].correctionEq.processSample (0, x);
@@ -118,7 +170,10 @@ void VocalChainOneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         }
     }
 
-    // Шаг 8: Flangus (стерео-блок, wet зафиксирован на 17%)
+    // =========================================================
+    // ШАГ 8: FLANGUS
+    // =========================================================
+
     {
         juce::AudioBuffer<float> dryCopy;
         dryCopy.makeCopyOf (buffer, true);
@@ -130,12 +185,20 @@ void VocalChainOneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         {
             auto* wet = buffer.getWritePointer (ch);
             auto* dry = dryCopy.getWritePointer (ch);
+
             for (int i = 0; i < numSamples; ++i)
-                wet[i] = dry[i] * (1.0f - FlangusStage::kWetFixed) + wet[i] * FlangusStage::kWetFixed;
+            {
+                wet[i] =
+                    dry[i] * (1.0f - FlangusStage::kWetFixed)
+                    + wet[i] * FlangusStage::kWetFixed;
+            }
         }
     }
 
-    // Шаг 9: Fruity Reverb 2 (стерео-блок, wet зафиксирован на 6%)
+    // =========================================================
+    // ШАГ 9: REVERB
+    // =========================================================
+
     {
         juce::AudioBuffer<float> dryCopy;
         dryCopy.makeCopyOf (buffer, true);
@@ -147,10 +210,41 @@ void VocalChainOneProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         {
             auto* wet = buffer.getWritePointer (ch);
             auto* dry = dryCopy.getWritePointer (ch);
+
             for (int i = 0; i < numSamples; ++i)
-                wet[i] = dry[i] * (1.0f - ReverbStage::kWetFixed) + wet[i] * ReverbStage::kWetFixed;
+            {
+                wet[i] =
+                    dry[i] * (1.0f - ReverbStage::kWetFixed)
+                    + wet[i] * ReverbStage::kWetFixed;
+            }
         }
     }
+
+    // =========================================================
+    // ШАГ 10: LOUDNESS / OUTPUT GAIN
+    //
+    // 0   = -6 dB
+    // 50  =  0 dB
+    // 100 = +6 dB
+    //
+    // Это обычное изменение громкости.
+    // Оно НЕ меняет работу предыдущих эффектов.
+    // =========================================================
+
+    const float loudness =
+        apvts.getRawParameterValue ("loudness")->load();
+
+    const float loudnessDb =
+        juce::jmap (
+            loudness,
+            0.0f, 100.0f,
+            -6.0f, 6.0f
+        );
+
+    const float outputGain =
+        juce::Decibels::decibelsToGain (loudnessDb);
+
+    buffer.applyGain (outputGain);
 }
 
 juce::AudioProcessorEditor* VocalChainOneProcessor::createEditor()
@@ -163,15 +257,25 @@ void VocalChainOneProcessor::getStateInformation (juce::MemoryBlock& destData)
     if (auto state = apvts.copyState(); state.isValid())
     {
         std::unique_ptr<juce::XmlElement> xml (state.createXml());
+
         copyXmlToBinary (*xml, destData);
     }
 }
 
-void VocalChainOneProcessor::setStateInformation (const void* data, int sizeInBytes)
+void VocalChainOneProcessor::setStateInformation (const void* data,
+                                                  int sizeInBytes)
 {
-    std::unique_ptr<juce::XmlElement> xml (getXmlFromBinary (data, sizeInBytes));
-    if (xml != nullptr && xml->hasTagName (apvts.state.getType()))
-        apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    std::unique_ptr<juce::XmlElement> xml (
+        getXmlFromBinary (data, sizeInBytes)
+    );
+
+    if (xml != nullptr
+        && xml->hasTagName (apvts.state.getType()))
+    {
+        apvts.replaceState (
+            juce::ValueTree::fromXml (*xml)
+        );
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
