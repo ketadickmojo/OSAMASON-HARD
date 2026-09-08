@@ -18,8 +18,7 @@ void AutoTuneEngine::prepare (
     if (blockSize <= 0)
         blockSize = 128;
 
-    detector.prepare (
-        sampleRate);
+    detector.prepare (sampleRate);
 
     reset();
 }
@@ -44,17 +43,11 @@ void AutoTuneEngine::reset()
     rightChannel.grainA = {};
     rightChannel.grainB = {};
 
-    leftChannel.grainA.age =
-        grainSize / 2;
+    leftChannel.grainA.age = grainSize / 2;
+    leftChannel.grainB.age = 0;
 
-    leftChannel.grainB.age =
-        0;
-
-    rightChannel.grainA.age =
-        grainSize / 2;
-
-    rightChannel.grainB.age =
-        0;
+    rightChannel.grainA.age = grainSize / 2;
+    rightChannel.grainB.age = 0;
 
     currentPitch = 0.0f;
     targetPitch = 0.0f;
@@ -253,12 +246,8 @@ float AutoTuneEngine::getTargetMidiNote (
 
         if (distance < bestDistance)
         {
-            bestDistance =
-                distance;
-
-            bestNote =
-                static_cast<float> (
-                    note);
+            bestDistance = distance;
+            bestNote = static_cast<float> (note);
         }
     }
 
@@ -288,8 +277,6 @@ float AutoTuneEngine::getRetuneCoefficient() const
             1.0f,
             retuneSpeed / 100.0f);
 
-    // Slow speed = gentle movement.
-    // Fast speed = aggressive correction.
     return
         0.0025f
         + normalized * 0.30f;
@@ -331,9 +318,9 @@ float AutoTuneEngine::readDelay (
             index0);
 
     return
-        delay[index0]
+        delay[static_cast<std::size_t> (index0)]
         * (1.0f - frac)
-        + delay[index1]
+        + delay[static_cast<std::size_t> (index1)]
         * frac;
 }
 
@@ -348,12 +335,9 @@ float AutoTuneEngine::getGrainWindow (
         return 0.0f;
 
     const float phase =
-        static_cast<float> (
-            age)
-        / static_cast<float> (
-            grainSize - 1);
+        static_cast<float> (age)
+        / static_cast<float> (grainSize - 1);
 
-    // Hann window.
     return
         0.5f
         - 0.5f
@@ -376,16 +360,11 @@ void AutoTuneEngine::resetGrain (
         static_cast<float> (
             grainSize);
 
-    // Start reading sufficiently behind the write head
-    // so we never read samples that haven't arrived yet.
     float startPosition =
         static_cast<float> (
             channel.writePosition)
         - baseDelay;
 
-    // A tiny pitch-ratio-dependent offset keeps the two
-    // grain heads from repeatedly landing at exactly
-    // the same interpolation position.
     startPosition -=
         (pitchRatio - 1.0f)
         * static_cast<float> (
@@ -427,16 +406,11 @@ float AutoTuneEngine::processPitchSample (
             channel.writePosition)] =
         input;
 
-    // Keep the ratio within a sane vocal range.
     pitchRatio =
         juce::jlimit (
             0.5f,
             2.0f,
             pitchRatio);
-
-    // ------------------------------------------------------------
-    // Activate grain heads.
-    // ------------------------------------------------------------
 
     if (!channel.grainA.active)
     {
@@ -490,9 +464,7 @@ float AutoTuneEngine::processPitchSample (
         ++channel.grainA.age;
 
         if (channel.grainA.age >= grainSize)
-        {
             channel.grainA.active = false;
-        }
     }
 
     // ------------------------------------------------------------
@@ -528,23 +500,24 @@ float AutoTuneEngine::processPitchSample (
         ++channel.grainB.age;
 
         if (channel.grainB.age >= grainSize)
-        {
             channel.grainB.active = false;
-        }
     }
 
     // ------------------------------------------------------------
-    // Keep the overlap-add level approximately constant.
+    // NORMALIZE OVERLAP
     // ------------------------------------------------------------
 
     if (windowSum > 1.0e-5f)
+    {
         output /= windowSum;
+    }
     else
+    {
         output = input;
+    }
 
     // ------------------------------------------------------------
-    // Start the inactive grain halfway through the grain
-    // to maintain continuous overlap.
+    // RESTART INACTIVE GRAIN
     // ------------------------------------------------------------
 
     if (!channel.grainA.active
@@ -554,9 +527,6 @@ float AutoTuneEngine::processPitchSample (
             channel.grainA,
             channel,
             pitchRatio);
-
-        channel.grainA.age =
-            0;
     }
 
     if (!channel.grainB.active
@@ -566,9 +536,6 @@ float AutoTuneEngine::processPitchSample (
             channel.grainB,
             channel,
             pitchRatio);
-
-        channel.grainB.age =
-            0;
     }
 
     ++channel.writePosition;
@@ -585,26 +552,27 @@ float AutoTuneEngine::processPitchSample (
 
 float AutoTuneEngine::processSample (
     float input,
-    bool rightChannel)
+    bool isRightChannel)
 {
+    // IMPORTANT:
+    // The parameter is called isRightChannel so it does not
+    // conflict with the rightChannel member variable.
+
     auto& channel =
-        rightChannel
+        isRightChannel
             ? rightChannel
             : leftChannel;
 
     // ------------------------------------------------------------
-    // Pitch detection
-    //
-    // The detector is currently mono and shared by both channels.
-    // The detected vocal pitch therefore controls the stereo pair
-    // consistently.
+    // PITCH DETECTION
     // ------------------------------------------------------------
 
     const float detected =
         detector.process (
             input);
 
-    if (!rightChannel && detected > 0.0f)
+    // Update pitch/correction only once per stereo sample pair.
+    if (!isRightChannel && detected > 0.0f)
     {
         currentPitch =
             detected;
@@ -613,16 +581,13 @@ float AutoTuneEngine::processSample (
             frequencyToMidi (
                 currentPitch);
 
-        const float newTargetMidi =
+        targetPitch =
             getTargetMidiNote (
                 detectedMidi);
-
-        targetPitch =
-            newTargetMidi;
     }
 
     // ------------------------------------------------------------
-    // No valid pitch = bypass correction.
+    // NO VALID PITCH
     // ------------------------------------------------------------
 
     if (currentPitch <= 0.0f
@@ -632,7 +597,7 @@ float AutoTuneEngine::processSample (
     }
 
     // ------------------------------------------------------------
-    // Current correction in semitones.
+    // CALCULATE CORRECTION
     // ------------------------------------------------------------
 
     const float detectedMidi =
@@ -655,7 +620,7 @@ float AutoTuneEngine::processSample (
         * amountNormalized;
 
     // ------------------------------------------------------------
-    // Retune smoothing.
+    // RETUNE SPEED
     // ------------------------------------------------------------
 
     const float coefficient =
@@ -669,7 +634,7 @@ float AutoTuneEngine::processSample (
         smoothedCorrection;
 
     // ------------------------------------------------------------
-    // Convert semitones to pitch ratio.
+    // SEMITONES -> RATIO
     // ------------------------------------------------------------
 
     const float pitchRatio =
@@ -678,7 +643,7 @@ float AutoTuneEngine::processSample (
             correctionSemitones / 12.0f);
 
     // ------------------------------------------------------------
-    // Apply realtime pitch shifting.
+    // REALTIME PITCH SHIFT
     // ------------------------------------------------------------
 
     return
