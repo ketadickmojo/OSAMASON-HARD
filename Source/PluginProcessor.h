@@ -1,6 +1,8 @@
 #pragma once
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+
 #include "DSP/CorrectionEQ.h"
 #include "DSP/SimpleLimiter.h"
 #include "DSP/VocalParametricEQ7.h"
@@ -10,6 +12,8 @@
 #include "DSP/FreshAirStage.h"
 #include "DSP/FlangusStage.h"
 #include "DSP/ReverbStage.h"
+
+#include "AutoTuneEngine.h"
 
 class VocalChainOneProcessor : public juce::AudioProcessor
 {
@@ -24,32 +28,92 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "VocalChainOne"; }
-    bool acceptsMidi() const override  { return false; }
-    bool producesMidi() const override { return false; }
-    double getTailLengthSeconds() const override { return 1.5; }
+    const juce::String getName() const override
+    {
+        return "VocalChainOne";
+    }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
+    bool acceptsMidi() const override
+    {
+        return false;
+    }
+
+    bool producesMidi() const override
+    {
+        return false;
+    }
+
+    double getTailLengthSeconds() const override
+    {
+        return 1.5;
+    }
+
+    int getNumPrograms() override
+    {
+        return 1;
+    }
+
+    int getCurrentProgram() override
+    {
+        return 0;
+    }
+
     void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
-    void changeProgramName (int, const juce::String&) override {}
 
-    void getStateInformation (juce::MemoryBlock& destData) override;
-    void setStateInformation (const void* data, int sizeInBytes) override;
+    const juce::String getProgramName (int) override
+    {
+        return {};
+    }
 
-    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+    void changeProgramName (
+        int,
+        const juce::String&) override {}
+
+    void getStateInformation (
+        juce::MemoryBlock& destData) override;
+
+    void setStateInformation (
+        const void* data,
+        int sizeInBytes) override;
+
+    bool isBusesLayoutSupported (
+        const BusesLayout& layouts) const override;
 
     juce::AudioProcessorValueTreeState apvts;
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+
     void updateAllStages();
 
-    // Цепочка -- порядок ФИКСИРОВАН и не должен меняться (по требованию пользователя):
-    // 1. CorrectionEQ  2. SimpleLimiter  3. VocalParametricEQ7  4. VintageCompressor
-    // 5. SoundgoodizerC  6. FastDistStage(wet 20%)  7. FreshAirStage
-    // 8. FlangusStage(wet 17%)  9. ReverbStage(wet 6%)
+    // ============================================================
+    // ОСНОВНАЯ ЦЕПОЧКА
+    //
+    // Auto-Tune
+    //      ↓
+    // CorrectionEQ
+    //      ↓
+    // Limiter
+    //      ↓
+    // EQ7
+    //      ↓
+    // Compressor
+    //      ↓
+    // Soundgoodizer
+    //      ↓
+    // Fast Dist
+    //      ↓
+    // Fresh Air
+    //      ↓
+    // Flangus
+    //      ↓
+    // Reverb
+    //      ↓
+    // Output
+    //
+    // Порядок фиксированный.
+    // ============================================================
+
     struct ChannelChain
     {
         CorrectionEQ correctionEq;
@@ -61,11 +125,24 @@ private:
         FreshAirStage freshAir;
     };
 
-    ChannelChain chains[2]; // L/R, всё до Flangus/Reverb -- пер-канально
-    FlangusStage flangus;   // стерео-модули берём juce::dsp напрямую (работают с блоком сразу)
+    // ============================================================
+    // AUTO-TUNE
+    // ============================================================
+
+    AutoTuneEngine autoTune;
+
+    // ============================================================
+    // VOCAL CHAIN
+    // ============================================================
+
+    ChannelChain chains[2];
+
+    // Стерео-обработка после пер-канальной части.
+    FlangusStage flangus;
     ReverbStage reverb;
 
     double currentSampleRate = 44100.0;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocalChainOneProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (
+        VocalChainOneProcessor)
 };
