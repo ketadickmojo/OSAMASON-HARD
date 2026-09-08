@@ -30,6 +30,8 @@ juce_add_plugin(VocalChainOne
 target_sources(VocalChainOne PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/AutoTuneEngine.cpp
+    Source/RealtimePitchDetector.cpp
 )
 
 target_compile_definitions(VocalChainOne PUBLIC
