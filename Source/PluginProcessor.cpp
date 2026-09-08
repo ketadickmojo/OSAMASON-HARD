@@ -48,9 +48,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalChainOneProcessor::crea
     return { params.begin(), params.end() };
 }
 
-void VocalChainOneProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void VocalChainOneProcessor::prepareToPlay (
+    double sampleRate,
+    int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
+
+    // ============================================================
+    // AUTO-TUNE
+    // ============================================================
+
+    autoTune.prepare (
+        sampleRate,
+        samplesPerBlock);
+
+    // ============================================================
+    // MONO PER-CHANNEL DSP
+    // ============================================================
 
     juce::dsp::ProcessSpec spec
     {
@@ -69,6 +83,10 @@ void VocalChainOneProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
         c.fastDist.prepare (sampleRate);
         c.freshAir.prepare (spec);
     }
+
+    // ============================================================
+    // STEREO DSP
+    // ============================================================
 
     juce::dsp::ProcessSpec stereoSpec
     {
@@ -99,41 +117,69 @@ void VocalChainOneProcessor::updateAllStages()
 
     for (auto& c : chains)
     {
-        // 1. Initial correction EQ
+        // ========================================================
+        // 1. Initial Correction EQ
+        // ========================================================
+
         c.correctionEq.update (tone);
 
+        // ========================================================
         // 2. Fruity Limiter
-        // Fixed settings. Loudness does NOT control the limiter.
+        // ========================================================
+
         c.limiter.update();
 
+        // ========================================================
         // 3. Vocal Parametric EQ
+        // ========================================================
+
         c.eq7.update (tone);
 
+        // ========================================================
         // 4. Vintage Compressor
+        // ========================================================
+
         c.compressor.update (punch);
 
+        // ========================================================
         // 5. Soundgoodizer C
-        // Fixed at original Amount = 45%.
+        // ========================================================
+
         c.soundgoodizer.update (45.0f);
 
+        // ========================================================
         // 6. Fast Dist
+        // ========================================================
+
         c.fastDist.update (grit);
 
+        // ========================================================
         // 7. Fresh Air
+        // ========================================================
+
         c.freshAir.update (tone);
     }
 
+    // ============================================================
     // 8. Flangus
+    // ============================================================
+
     flangus.update (space);
 
+    // ============================================================
     // 9. Reverb
+    // ============================================================
+
     reverb.update (space);
 }
 
-bool VocalChainOneProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool VocalChainOneProcessor::isBusesLayoutSupported (
+    const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && layouts.getMainInputChannelSet()  == juce::AudioChannelSet::stereo();
+    return layouts.getMainOutputChannelSet()
+                == juce::AudioChannelSet::stereo()
+        && layouts.getMainInputChannelSet()
+                == juce::AudioChannelSet::stereo();
 }
 
 void VocalChainOneProcessor::processBlock (
@@ -142,15 +188,39 @@ void VocalChainOneProcessor::processBlock (
 {
     juce::ScopedNoDenormals noDenormals;
 
-    updateAllStages();
+    const int numSamples =
+        buffer.getNumSamples();
 
-    const int numSamples = buffer.getNumSamples();
-    const int numChannels = buffer.getNumChannels();
+    const int numChannels =
+        buffer.getNumChannels();
 
     if (numChannels == 0)
         return;
 
-    auto* left = buffer.getWritePointer (0);
+    // ============================================================
+    // UPDATE PARAMETERS
+    // ============================================================
+
+    updateAllStages();
+
+    // ============================================================
+    // 1. AUTO-TUNE
+    //
+    // Auto-Tune должен идти ПЕРЕД всей остальной цепочкой.
+    //
+    // Сейчас движок умеет обнаруживать pitch, но пока ещё
+    // не изменяет высоту звука. Поэтому сигнал здесь пока
+    // фактически проходит без изменения pitch.
+    // ============================================================
+
+    autoTune.process (buffer);
+
+    // ============================================================
+    // CHANNEL POINTERS
+    // ============================================================
+
+    auto* left =
+        buffer.getWritePointer (0);
 
     auto* right =
         numChannels > 1
@@ -158,38 +228,96 @@ void VocalChainOneProcessor::processBlock (
             : nullptr;
 
     // ============================================================
-    // 1-7. MONO PER-CHANNEL PROCESSING
+    // 2-7. MONO PER-CHANNEL PROCESSING
+    //
+    // Correction EQ
+    // Limiter
+    // EQ
+    // Compressor
+    // Soundgoodizer
+    // Fast Dist
+    // Fresh Air
     // ============================================================
 
-    for (int i = 0; i < numSamples; ++i)
+    for (int i = 0;
+         i < numSamples;
+         ++i)
     {
+        // --------------------------------------------------------
         // LEFT
-        {
-            float x = left[i];
+        // --------------------------------------------------------
 
-            x = chains[0].correctionEq.processSample (0, x);
-            x = chains[0].limiter.processSample (x);
-            x = chains[0].eq7.processSample (0, x);
-            x = chains[0].compressor.processSample (x);
-            x = chains[0].soundgoodizer.processSample (x);
-            x = chains[0].fastDist.processSample (x);
-            x = chains[0].freshAir.processSample (0, x);
+        {
+            float x =
+                left[i];
+
+            x =
+                chains[0].correctionEq
+                    .processSample (0, x);
+
+            x =
+                chains[0].limiter
+                    .processSample (x);
+
+            x =
+                chains[0].eq7
+                    .processSample (0, x);
+
+            x =
+                chains[0].compressor
+                    .processSample (x);
+
+            x =
+                chains[0].soundgoodizer
+                    .processSample (x);
+
+            x =
+                chains[0].fastDist
+                    .processSample (x);
+
+            x =
+                chains[0].freshAir
+                    .processSample (0, x);
 
             left[i] = x;
         }
 
+        // --------------------------------------------------------
         // RIGHT
+        // --------------------------------------------------------
+
         if (right != nullptr)
         {
-            float x = right[i];
+            float x =
+                right[i];
 
-            x = chains[1].correctionEq.processSample (0, x);
-            x = chains[1].limiter.processSample (x);
-            x = chains[1].eq7.processSample (0, x);
-            x = chains[1].compressor.processSample (x);
-            x = chains[1].soundgoodizer.processSample (x);
-            x = chains[1].fastDist.processSample (x);
-            x = chains[1].freshAir.processSample (0, x);
+            x =
+                chains[1].correctionEq
+                    .processSample (0, x);
+
+            x =
+                chains[1].limiter
+                    .processSample (x);
+
+            x =
+                chains[1].eq7
+                    .processSample (0, x);
+
+            x =
+                chains[1].compressor
+                    .processSample (x);
+
+            x =
+                chains[1].soundgoodizer
+                    .processSample (x);
+
+            x =
+                chains[1].fastDist
+                    .processSample (x);
+
+            x =
+                chains[1].freshAir
+                    .processSample (0, x);
 
             right[i] = x;
         }
@@ -201,21 +329,37 @@ void VocalChainOneProcessor::processBlock (
 
     {
         juce::AudioBuffer<float> dryCopy;
-        dryCopy.makeCopyOf (buffer, true);
 
-        juce::dsp::AudioBlock<float> block (buffer);
-        flangus.process (block);
+        dryCopy.makeCopyOf (
+            buffer,
+            true);
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        juce::dsp::AudioBlock<float> block (
+            buffer);
+
+        flangus.process (
+            block);
+
+        for (int ch = 0;
+             ch < numChannels;
+             ++ch)
         {
-            auto* wet = buffer.getWritePointer (ch);
-            auto* dry = dryCopy.getReadPointer (ch);
+            auto* wet =
+                buffer.getWritePointer (ch);
 
-            for (int i = 0; i < numSamples; ++i)
+            const auto* dry =
+                dryCopy.getReadPointer (ch);
+
+            for (int i = 0;
+                 i < numSamples;
+                 ++i)
             {
                 wet[i] =
-                    dry[i] * (1.0f - FlangusStage::kWetFixed)
-                    + wet[i] * FlangusStage::kWetFixed;
+                    dry[i]
+                    * (1.0f
+                       - FlangusStage::kWetFixed)
+                    + wet[i]
+                    * FlangusStage::kWetFixed;
             }
         }
     }
@@ -226,54 +370,76 @@ void VocalChainOneProcessor::processBlock (
 
     {
         juce::AudioBuffer<float> dryCopy;
-        dryCopy.makeCopyOf (buffer, true);
 
-        juce::dsp::AudioBlock<float> block (buffer);
-        reverb.process (block);
+        dryCopy.makeCopyOf (
+            buffer,
+            true);
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        juce::dsp::AudioBlock<float> block (
+            buffer);
+
+        reverb.process (
+            block);
+
+        for (int ch = 0;
+             ch < numChannels;
+             ++ch)
         {
-            auto* wet = buffer.getWritePointer (ch);
-            auto* dry = dryCopy.getReadPointer (ch);
+            auto* wet =
+                buffer.getWritePointer (ch);
 
-            for (int i = 0; i < numSamples; ++i)
+            const auto* dry =
+                dryCopy.getReadPointer (ch);
+
+            for (int i = 0;
+                 i < numSamples;
+                 ++i)
             {
                 wet[i] =
-                    dry[i] * (1.0f - ReverbStage::kWetFixed)
-                    + wet[i] * ReverbStage::kWetFixed;
+                    dry[i]
+                    * (1.0f
+                       - ReverbStage::kWetFixed)
+                    + wet[i]
+                    * ReverbStage::kWetFixed;
             }
         }
     }
 
     // ============================================================
     // FINAL OUTPUT GAIN
-    // "Громкость" = PURE FINAL GAIN
     //
     // 0   -> -6 dB
     // 50  ->  0 dB
     // 100 -> +6 dB
     //
-    // It does NOT change limiter/compressor/etc.
+    // "Громкость" НЕ меняет limiter/compressor.
     // ============================================================
 
     const float loudness =
-        apvts.getRawParameterValue ("loudness")->load();
+        apvts.getRawParameterValue (
+            "loudness")->load();
 
     const float outputGainDb =
         juce::jmap (
-            juce::jlimit (0.0f, 100.0f, loudness),
+            juce::jlimit (
+                0.0f,
+                100.0f,
+                loudness),
             0.0f,
             100.0f,
             -6.0f,
             6.0f);
 
     const float outputGain =
-        juce::Decibels::decibelsToGain (outputGainDb);
+        juce::Decibels::decibelsToGain (
+            outputGainDb);
 
-    buffer.applyGain (outputGain);
+    buffer.applyGain (
+        outputGain);
 }
 
-juce::AudioProcessorEditor* VocalChainOneProcessor::createEditor()
+juce::AudioProcessorEditor*
+VocalChainOneProcessor::createEditor()
 {
     return new VocalChainOneEditor (*this);
 }
@@ -281,10 +447,16 @@ juce::AudioProcessorEditor* VocalChainOneProcessor::createEditor()
 void VocalChainOneProcessor::getStateInformation (
     juce::MemoryBlock& destData)
 {
-    if (auto state = apvts.copyState(); state.isValid())
+    if (auto state =
+            apvts.copyState();
+        state.isValid())
     {
-        std::unique_ptr<juce::XmlElement> xml (state.createXml());
-        copyXmlToBinary (*xml, destData);
+        std::unique_ptr<juce::XmlElement> xml (
+            state.createXml());
+
+        copyXmlToBinary (
+            *xml,
+            destData);
     }
 }
 
@@ -293,17 +465,22 @@ void VocalChainOneProcessor::setStateInformation (
     int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xml (
-        getXmlFromBinary (data, sizeInBytes));
+        getXmlFromBinary (
+            data,
+            sizeInBytes));
 
     if (xml != nullptr
-        && xml->hasTagName (apvts.state.getType()))
+        && xml->hasTagName (
+            apvts.state.getType()))
     {
         apvts.replaceState (
-            juce::ValueTree::fromXml (*xml));
+            juce::ValueTree::fromXml (
+                *xml));
     }
 }
 
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+juce::AudioProcessor*
+JUCE_CALLTYPE createPluginFilter()
 {
     return new VocalChainOneProcessor();
 }
