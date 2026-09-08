@@ -1,34 +1,71 @@
 #include "AutoTuneEngine.h"
 
+// ================================================================
+// PREPARE
+// ================================================================
+
 void AutoTuneEngine::prepare (
     double newSampleRate,
     int newSamplesPerBlock)
 {
     sampleRate = newSampleRate;
+
+    if (sampleRate <= 0.0)
+        sampleRate = 44100.0;
+
     blockSize = newSamplesPerBlock;
 
-    detector.prepare (sampleRate);
+    if (blockSize <= 0)
+        blockSize = 128;
+
+    detector.prepare (
+        sampleRate);
 
     reset();
 }
+
+// ================================================================
+// RESET
+// ================================================================
 
 void AutoTuneEngine::reset()
 {
     detector.reset();
 
-    delayL.fill (0.0f);
-    delayR.fill (0.0f);
+    leftChannel.delay.fill (0.0f);
+    rightChannel.delay.fill (0.0f);
 
-    delayWritePosition = 0;
+    leftChannel.writePosition = 0;
+    rightChannel.writePosition = 0;
+
+    leftChannel.grainA = {};
+    leftChannel.grainB = {};
+
+    rightChannel.grainA = {};
+    rightChannel.grainB = {};
+
+    leftChannel.grainA.age =
+        grainSize / 2;
+
+    leftChannel.grainB.age =
+        0;
+
+    rightChannel.grainA.age =
+        grainSize / 2;
+
+    rightChannel.grainB.age =
+        0;
 
     currentPitch = 0.0f;
     targetPitch = 0.0f;
 
     correctionSemitones = 0.0f;
     smoothedCorrection = 0.0f;
-
-    oscillatorPhase = 0.0f;
 }
+
+// ================================================================
+// ENABLE
+// ================================================================
 
 void AutoTuneEngine::setEnabled (
     bool shouldBeEnabled)
@@ -42,6 +79,10 @@ void AutoTuneEngine::setEnabled (
         reset();
 }
 
+// ================================================================
+// KEY
+// ================================================================
+
 void AutoTuneEngine::setKey (
     int newKey)
 {
@@ -52,11 +93,19 @@ void AutoTuneEngine::setKey (
             newKey);
 }
 
+// ================================================================
+// SCALE
+// ================================================================
+
 void AutoTuneEngine::setScale (
     ScaleType newScale)
 {
     scale = newScale;
 }
+
+// ================================================================
+// RETUNE SPEED
+// ================================================================
 
 void AutoTuneEngine::setRetuneSpeed (
     float newSpeed)
@@ -68,6 +117,10 @@ void AutoTuneEngine::setRetuneSpeed (
             newSpeed);
 }
 
+// ================================================================
+// AMOUNT
+// ================================================================
+
 void AutoTuneEngine::setAmount (
     float newAmount)
 {
@@ -78,6 +131,10 @@ void AutoTuneEngine::setAmount (
             newAmount);
 }
 
+// ================================================================
+// FREQUENCY -> MIDI
+// ================================================================
+
 float AutoTuneEngine::frequencyToMidi (
     float frequency) const
 {
@@ -85,21 +142,29 @@ float AutoTuneEngine::frequencyToMidi (
         return -1.0f;
 
     return
-        69.0f +
-        12.0f *
-        std::log2 (
+        69.0f
+        + 12.0f
+        * std::log2 (
             frequency / 440.0f);
 }
+
+// ================================================================
+// MIDI -> FREQUENCY
+// ================================================================
 
 float AutoTuneEngine::midiToFrequency (
     float midi) const
 {
     return
-        440.0f *
-        std::pow (
+        440.0f
+        * std::pow (
             2.0f,
             (midi - 69.0f) / 12.0f);
 }
+
+// ================================================================
+// NOTE ALLOWED BY SCALE
+// ================================================================
 
 bool AutoTuneEngine::isNoteAllowed (
     int midiNote) const
@@ -109,16 +174,34 @@ bool AutoTuneEngine::isNoteAllowed (
 
     static constexpr bool major[12] =
     {
-        true, false, true, false,
-        true, true, false, true,
-        false, true, false, true
+        true,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true
     };
 
     static constexpr bool minor[12] =
     {
-        true, false, true, true,
-        false, true, false, true,
-        true, false, true, false
+        true,
+        false,
+        true,
+        true,
+        false,
+        true,
+        false,
+        true,
+        true,
+        false,
+        true,
+        false
     };
 
     const int pitchClass =
@@ -132,6 +215,10 @@ bool AutoTuneEngine::isNoteAllowed (
 
     return minor[relative];
 }
+
+// ================================================================
+// FIND TARGET NOTE
+// ================================================================
 
 float AutoTuneEngine::getTargetMidiNote (
     float detectedMidi) const
@@ -160,8 +247,8 @@ float AutoTuneEngine::getTargetMidiNote (
 
         const float distance =
             std::abs (
-                detectedMidi -
-                static_cast<float> (
+                detectedMidi
+                - static_cast<float> (
                     note));
 
         if (distance < bestDistance)
@@ -178,12 +265,20 @@ float AutoTuneEngine::getTargetMidiNote (
     return bestNote;
 }
 
+// ================================================================
+// SEMITONE DISTANCE
+// ================================================================
+
 float AutoTuneEngine::semitoneDistance (
     float from,
     float to) const
 {
     return to - from;
 }
+
+// ================================================================
+// RETUNE COEFFICIENT
+// ================================================================
 
 float AutoTuneEngine::getRetuneCoefficient() const
 {
@@ -193,10 +288,16 @@ float AutoTuneEngine::getRetuneCoefficient() const
             1.0f,
             retuneSpeed / 100.0f);
 
+    // Slow speed = gentle movement.
+    // Fast speed = aggressive correction.
     return
-        0.0005f +
-        normalized * 0.25f;
+        0.0025f
+        + normalized * 0.30f;
 }
+
+// ================================================================
+// DELAY READ
+// ================================================================
 
 float AutoTuneEngine::readDelay (
     const std::array<float, delaySize>& delay,
@@ -221,63 +322,375 @@ float AutoTuneEngine::readDelay (
             position);
 
     const int index1 =
-        (index0 + 1) %
-        delaySize;
+        (index0 + 1)
+        % delaySize;
 
     const float frac =
-        position -
-        static_cast<float> (
+        position
+        - static_cast<float> (
             index0);
 
     return
-        delay[index0] *
-            (1.0f - frac)
-        +
-        delay[index1] *
-            frac;
+        delay[index0]
+        * (1.0f - frac)
+        + delay[index1]
+        * frac;
 }
+
+// ================================================================
+// GRAIN WINDOW
+// ================================================================
+
+float AutoTuneEngine::getGrainWindow (
+    int age) const
+{
+    if (age < 0 || age >= grainSize)
+        return 0.0f;
+
+    const float phase =
+        static_cast<float> (
+            age)
+        / static_cast<float> (
+            grainSize - 1);
+
+    // Hann window.
+    return
+        0.5f
+        - 0.5f
+        * std::cos (
+            2.0f
+            * juce::MathConstants<float>::pi
+            * phase);
+}
+
+// ================================================================
+// RESET GRAIN
+// ================================================================
+
+void AutoTuneEngine::resetGrain (
+    Grain& grain,
+    const ChannelState& channel,
+    float pitchRatio)
+{
+    const float baseDelay =
+        static_cast<float> (
+            grainSize);
+
+    // Start reading sufficiently behind the write head
+    // so we never read samples that haven't arrived yet.
+    float startPosition =
+        static_cast<float> (
+            channel.writePosition)
+        - baseDelay;
+
+    // A tiny pitch-ratio-dependent offset keeps the two
+    // grain heads from repeatedly landing at exactly
+    // the same interpolation position.
+    startPosition -=
+        (pitchRatio - 1.0f)
+        * static_cast<float> (
+            grainSize)
+        * 0.25f;
+
+    while (startPosition < 0.0f)
+        startPosition +=
+            static_cast<float> (
+                delaySize);
+
+    while (startPosition >=
+           static_cast<float> (
+               delaySize))
+    {
+        startPosition -=
+            static_cast<float> (
+                delaySize);
+    }
+
+    grain.readPosition =
+        startPosition;
+
+    grain.age = 0;
+    grain.active = true;
+}
+
+// ================================================================
+// PITCH PROCESSING
+// ================================================================
+
+float AutoTuneEngine::processPitchSample (
+    float input,
+    ChannelState& channel,
+    float pitchRatio)
+{
+    channel.delay[
+        static_cast<std::size_t> (
+            channel.writePosition)] =
+        input;
+
+    // Keep the ratio within a sane vocal range.
+    pitchRatio =
+        juce::jlimit (
+            0.5f,
+            2.0f,
+            pitchRatio);
+
+    // ------------------------------------------------------------
+    // Activate grain heads.
+    // ------------------------------------------------------------
+
+    if (!channel.grainA.active)
+    {
+        resetGrain (
+            channel.grainA,
+            channel,
+            pitchRatio);
+    }
+
+    if (!channel.grainB.active)
+    {
+        resetGrain (
+            channel.grainB,
+            channel,
+            pitchRatio);
+    }
+
+    float output = 0.0f;
+    float windowSum = 0.0f;
+
+    // ------------------------------------------------------------
+    // GRAIN A
+    // ------------------------------------------------------------
+
+    if (channel.grainA.active)
+    {
+        const float window =
+            getGrainWindow (
+                channel.grainA.age);
+
+        output +=
+            readDelay (
+                channel.delay,
+                channel.grainA.readPosition)
+            * window;
+
+        windowSum += window;
+
+        channel.grainA.readPosition +=
+            pitchRatio;
+
+        if (channel.grainA.readPosition >=
+            static_cast<float> (
+                delaySize))
+        {
+            channel.grainA.readPosition -=
+                static_cast<float> (
+                    delaySize);
+        }
+
+        ++channel.grainA.age;
+
+        if (channel.grainA.age >= grainSize)
+        {
+            channel.grainA.active = false;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // GRAIN B
+    // ------------------------------------------------------------
+
+    if (channel.grainB.active)
+    {
+        const float window =
+            getGrainWindow (
+                channel.grainB.age);
+
+        output +=
+            readDelay (
+                channel.delay,
+                channel.grainB.readPosition)
+            * window;
+
+        windowSum += window;
+
+        channel.grainB.readPosition +=
+            pitchRatio;
+
+        if (channel.grainB.readPosition >=
+            static_cast<float> (
+                delaySize))
+        {
+            channel.grainB.readPosition -=
+                static_cast<float> (
+                    delaySize);
+        }
+
+        ++channel.grainB.age;
+
+        if (channel.grainB.age >= grainSize)
+        {
+            channel.grainB.active = false;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Keep the overlap-add level approximately constant.
+    // ------------------------------------------------------------
+
+    if (windowSum > 1.0e-5f)
+        output /= windowSum;
+    else
+        output = input;
+
+    // ------------------------------------------------------------
+    // Start the inactive grain halfway through the grain
+    // to maintain continuous overlap.
+    // ------------------------------------------------------------
+
+    if (!channel.grainA.active
+        && channel.grainB.active)
+    {
+        resetGrain (
+            channel.grainA,
+            channel,
+            pitchRatio);
+
+        channel.grainA.age =
+            0;
+    }
+
+    if (!channel.grainB.active
+        && channel.grainA.active)
+    {
+        resetGrain (
+            channel.grainB,
+            channel,
+            pitchRatio);
+
+        channel.grainB.age =
+            0;
+    }
+
+    ++channel.writePosition;
+
+    if (channel.writePosition >= delaySize)
+        channel.writePosition = 0;
+
+    return output;
+}
+
+// ================================================================
+// PROCESS ONE SAMPLE
+// ================================================================
 
 float AutoTuneEngine::processSample (
     float input,
     bool rightChannel)
 {
-    auto& delay =
+    auto& channel =
         rightChannel
-            ? delayR
-            : delayL;
+            ? rightChannel
+            : leftChannel;
 
-    delay[delayWritePosition] =
-        input;
+    // ------------------------------------------------------------
+    // Pitch detection
+    //
+    // The detector is currently mono and shared by both channels.
+    // The detected vocal pitch therefore controls the stereo pair
+    // consistently.
+    // ------------------------------------------------------------
 
     const float detected =
         detector.process (
             input);
 
-    if (detected > 0.0f)
-        currentPitch = detected;
-
-    /*
-        Пока не изменяем высоту звука.
-
-        Этот этап нужен для проверки:
-        - realtime pitch detector
-        - Key
-        - Scale
-        - Retune Speed
-        - Amount
-        - сохранения состояния между блоками
-    */
-
-    delayWritePosition++;
-
-    if (delayWritePosition >=
-        delaySize)
+    if (!rightChannel && detected > 0.0f)
     {
-        delayWritePosition = 0;
+        currentPitch =
+            detected;
+
+        const float detectedMidi =
+            frequencyToMidi (
+                currentPitch);
+
+        const float newTargetMidi =
+            getTargetMidiNote (
+                detectedMidi);
+
+        targetPitch =
+            newTargetMidi;
     }
 
-    return input;
+    // ------------------------------------------------------------
+    // No valid pitch = bypass correction.
+    // ------------------------------------------------------------
+
+    if (currentPitch <= 0.0f
+        || targetPitch <= 0.0f)
+    {
+        return input;
+    }
+
+    // ------------------------------------------------------------
+    // Current correction in semitones.
+    // ------------------------------------------------------------
+
+    const float detectedMidi =
+        frequencyToMidi (
+            currentPitch);
+
+    const float desiredSemitones =
+        semitoneDistance (
+            detectedMidi,
+            targetPitch);
+
+    const float amountNormalized =
+        juce::jlimit (
+            0.0f,
+            1.0f,
+            amount / 100.0f);
+
+    const float amountScaled =
+        desiredSemitones
+        * amountNormalized;
+
+    // ------------------------------------------------------------
+    // Retune smoothing.
+    // ------------------------------------------------------------
+
+    const float coefficient =
+        getRetuneCoefficient();
+
+    smoothedCorrection +=
+        (amountScaled - smoothedCorrection)
+        * coefficient;
+
+    correctionSemitones =
+        smoothedCorrection;
+
+    // ------------------------------------------------------------
+    // Convert semitones to pitch ratio.
+    // ------------------------------------------------------------
+
+    const float pitchRatio =
+        std::pow (
+            2.0f,
+            correctionSemitones / 12.0f);
+
+    // ------------------------------------------------------------
+    // Apply realtime pitch shifting.
+    // ------------------------------------------------------------
+
+    return
+        processPitchSample (
+            input,
+            channel,
+            pitchRatio);
 }
+
+// ================================================================
+// PROCESS BLOCK
+// ================================================================
 
 void AutoTuneEngine::process (
     juce::AudioBuffer<float>& buffer)
