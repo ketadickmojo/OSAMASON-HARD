@@ -19,49 +19,96 @@ public:
         Chromatic
     };
 
-    void prepare(
+    void prepare (
         double newSampleRate,
         int newSamplesPerBlock);
 
     void reset();
 
-    void setEnabled(bool shouldBeEnabled);
-    void setKey(int newKey);
-    void setScale(ScaleType newScale);
-    void setRetuneSpeed(float newSpeed);
-    void setAmount(float newAmount);
+    void setEnabled (bool shouldBeEnabled);
+    void setKey (int newKey);
+    void setScale (ScaleType newScale);
+    void setRetuneSpeed (float newSpeed);
+    void setAmount (float newAmount);
 
-    void process(
+    void process (
         juce::AudioBuffer<float>& buffer);
 
 private:
-    static constexpr int delaySize = 8192;
 
-    float processSample(
+    // ============================================================
+    // REALTIME PITCH SHIFTER
+    //
+    // Two overlapping granular read heads are used for the first
+    // realtime correction stage.
+    // ============================================================
+
+    static constexpr int delaySize = 8192;
+    static constexpr int grainSize = 256;
+
+    struct Grain
+    {
+        float readPosition = 0.0f;
+        int age = grainSize / 2;
+        bool active = false;
+    };
+
+    struct ChannelState
+    {
+        std::array<float, delaySize> delay {};
+
+        int writePosition = 0;
+
+        Grain grainA;
+        Grain grainB;
+    };
+
+    float processSample (
         float input,
         bool rightChannel);
 
-    float frequencyToMidi(
+    float processPitchSample (
+        float input,
+        ChannelState& channel,
+        float pitchRatio);
+
+    float readDelay (
+        const std::array<float, delaySize>& delay,
+        float position) const;
+
+    float getGrainWindow (
+        int age) const;
+
+    void resetGrain (
+        Grain& grain,
+        const ChannelState& channel,
+        float pitchRatio);
+
+    // ============================================================
+    // NOTE / PITCH CALCULATION
+    // ============================================================
+
+    float frequencyToMidi (
         float frequency) const;
 
-    float midiToFrequency(
+    float midiToFrequency (
         float midi) const;
 
-    bool isNoteAllowed(
+    bool isNoteAllowed (
         int midiNote) const;
 
-    float getTargetMidiNote(
+    float getTargetMidiNote (
         float detectedMidi) const;
 
-    float semitoneDistance(
+    float semitoneDistance (
         float from,
         float to) const;
 
     float getRetuneCoefficient() const;
 
-    float readDelay(
-        const std::array<float, delaySize>& delay,
-        float position) const;
+    // ============================================================
+    // PITCH DETECTION / CORRECTION STATE
+    // ============================================================
 
     RealtimePitchDetector detector;
 
@@ -77,16 +124,20 @@ private:
     float retuneSpeed = 50.0f;
     float amount = 100.0f;
 
-    std::array<float, delaySize> delayL {};
-    std::array<float, delaySize> delayR {};
+    // ============================================================
+    // STEREO CHANNEL STATE
+    // ============================================================
 
-    int delayWritePosition = 0;
+    ChannelState leftChannel;
+    ChannelState rightChannel;
+
+    // ============================================================
+    // CURRENT CORRECTION
+    // ============================================================
 
     float currentPitch = 0.0f;
     float targetPitch = 0.0f;
 
     float correctionSemitones = 0.0f;
     float smoothedCorrection = 0.0f;
-
-    float oscillatorPhase = 0.0f;
 };
