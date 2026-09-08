@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 
 class AutoTuneEngine
 {
@@ -18,47 +19,47 @@ public:
         Chromatic
     };
 
-    void prepare (
+    void prepare(
         double newSampleRate,
         int newSamplesPerBlock);
 
     void reset();
 
-    void setEnabled (bool shouldBeEnabled);
-    void setKey (int newKey);
-    void setScale (ScaleType newScale);
-    void setRetuneSpeed (float newSpeed);
-    void setAmount (float newAmount);
+    void setEnabled(bool shouldBeEnabled);
+    void setKey(int newKey);
+    void setScale(ScaleType newScale);
+    void setRetuneSpeed(float newSpeed);
+    void setAmount(float newAmount);
 
-    void process (
+    void process(
         juce::AudioBuffer<float>& buffer);
 
 private:
     static constexpr int delaySize = 8192;
 
-    float processSample (
+    float processSample(
         float input,
         bool rightChannel);
 
-    float frequencyToMidi (
+    float frequencyToMidi(
         float frequency) const;
 
-    float midiToFrequency (
+    float midiToFrequency(
         float midi) const;
 
-    bool isNoteAllowed (
+    bool isNoteAllowed(
         int midiNote) const;
 
-    float getTargetMidiNote (
+    float getTargetMidiNote(
         float detectedMidi) const;
 
-    float semitoneDistance (
+    float semitoneDistance(
         float from,
         float to) const;
 
     float getRetuneCoefficient() const;
 
-    float readDelay (
+    float readDelay(
         const std::array<float, delaySize>& delay,
         float position) const;
 
