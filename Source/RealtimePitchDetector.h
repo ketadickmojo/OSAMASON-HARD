@@ -1,35 +1,26 @@
 #pragma once
 
-#include <JuceHeader.h>
-#include <array>
+#include <juce_audio_basics/juce_audio_basics.h>
 
 class RealtimePitchDetector
 {
 public:
-    void prepare (double sampleRate);
+    void prepare (
+        double newSampleRate);
+
     void reset();
 
-    float process (float sample);
+    float process (
+        float input);
 
 private:
-    double sampleRate = 48000.0;
+    double sampleRate = 44100.0;
 
-    static constexpr int bufferSize = 1024;
-    static constexpr int minLag = 32;
-    static constexpr int maxLag = 512;
+    float lastPitch = 0.0f;
 
-    std::array<float, bufferSize> buffer {};
-    int writeIndex = 0;
-    int samplesSinceAnalysis = 0;
+    float previousSample = 0.0f;
+    float previousDifference = 0.0f;
 
-    float smoothedPitch = 0.0f;
+    float periodSamples = 0.0f;
     float confidence = 0.0f;
-
-    float detectPitch() const;
-
-    float interpolatedLag (
-        int lag,
-        float ym1,
-        float y,
-        float yp1) const;
 };
