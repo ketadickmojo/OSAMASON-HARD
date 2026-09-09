@@ -21,12 +21,22 @@ public:
     VocalChainOneProcessor();
     ~VocalChainOneProcessor() override = default;
 
-    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void prepareToPlay (
+        double sampleRate,
+        int samplesPerBlock) override;
+
     void releaseResources() override {}
-    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    void processBlock (
+        juce::AudioBuffer<float>&,
+        juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override { return true; }
+
+    bool hasEditor() const override
+    {
+        return true;
+    }
 
     const juce::String getName() const override
     {
@@ -79,6 +89,10 @@ public:
     bool isBusesLayoutSupported (
         const BusesLayout& layouts) const override;
 
+    // ============================================================
+    // PARAMETERS
+    // ============================================================
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
@@ -87,7 +101,7 @@ private:
     void updateAllStages();
 
     // ============================================================
-    // ОСНОВНАЯ ЦЕПОЧКА
+    // MAIN VOCAL CHAIN
     //
     // Auto-Tune
     //      ↓
@@ -109,9 +123,7 @@ private:
     //      ↓
     // Reverb
     //      ↓
-    // Output
-    //
-    // Порядок фиксированный.
+    // Output Gain
     // ============================================================
 
     struct ChannelChain
@@ -126,7 +138,7 @@ private:
     };
 
     // ============================================================
-    // AUTO-TUNE
+    // AUTO-TUNE ENGINE
     // ============================================================
 
     AutoTuneEngine autoTune;
@@ -137,7 +149,7 @@ private:
 
     ChannelChain chains[2];
 
-    // Стерео-обработка после пер-канальной части.
+    // Stereo processing after the per-channel section.
     FlangusStage flangus;
     ReverbStage reverb;
 
