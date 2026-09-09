@@ -18,7 +18,8 @@ void AutoTuneEngine::prepare (
     if (blockSize <= 0)
         blockSize = 128;
 
-    detector.prepare (sampleRate);
+    detector.prepare (
+        sampleRate);
 
     reset();
 }
@@ -43,11 +44,17 @@ void AutoTuneEngine::reset()
     rightChannel.grainA = {};
     rightChannel.grainB = {};
 
-    leftChannel.grainA.age = grainSize / 2;
-    leftChannel.grainB.age = 0;
+    leftChannel.grainA.age =
+        grainSize / 2;
 
-    rightChannel.grainA.age = grainSize / 2;
-    rightChannel.grainB.age = 0;
+    leftChannel.grainB.age =
+        0;
+
+    rightChannel.grainA.age =
+        grainSize / 2;
+
+    rightChannel.grainB.age =
+        0;
 
     currentPitch = 0.0f;
     targetPitch = 0.0f;
@@ -246,8 +253,12 @@ float AutoTuneEngine::getTargetMidiNote (
 
         if (distance < bestDistance)
         {
-            bestDistance = distance;
-            bestNote = static_cast<float> (note);
+            bestDistance =
+                distance;
+
+            bestNote =
+                static_cast<float> (
+                    note);
         }
     }
 
@@ -291,9 +302,11 @@ float AutoTuneEngine::readDelay (
     float position) const
 {
     while (position < 0.0f)
+    {
         position +=
             static_cast<float> (
                 delaySize);
+    }
 
     while (position >=
            static_cast<float> (
@@ -318,9 +331,14 @@ float AutoTuneEngine::readDelay (
             index0);
 
     return
-        delay[static_cast<std::size_t> (index0)]
+        delay[
+            static_cast<std::size_t> (
+                index0)]
         * (1.0f - frac)
-        + delay[static_cast<std::size_t> (index1)]
+        +
+        delay[
+            static_cast<std::size_t> (
+                index1)]
         * frac;
 }
 
@@ -335,8 +353,10 @@ float AutoTuneEngine::getGrainWindow (
         return 0.0f;
 
     const float phase =
-        static_cast<float> (age)
-        / static_cast<float> (grainSize - 1);
+        static_cast<float> (
+            age)
+        / static_cast<float> (
+            grainSize - 1);
 
     return
         0.5f
@@ -372,9 +392,11 @@ void AutoTuneEngine::resetGrain (
         * 0.25f;
 
     while (startPosition < 0.0f)
+    {
         startPosition +=
             static_cast<float> (
                 delaySize);
+    }
 
     while (startPosition >=
            static_cast<float> (
@@ -431,9 +453,9 @@ float AutoTuneEngine::processPitchSample (
     float output = 0.0f;
     float windowSum = 0.0f;
 
-    // ------------------------------------------------------------
+    // ============================================================
     // GRAIN A
-    // ------------------------------------------------------------
+    // ============================================================
 
     if (channel.grainA.active)
     {
@@ -467,9 +489,9 @@ float AutoTuneEngine::processPitchSample (
             channel.grainA.active = false;
     }
 
-    // ------------------------------------------------------------
+    // ============================================================
     // GRAIN B
-    // ------------------------------------------------------------
+    // ============================================================
 
     if (channel.grainB.active)
     {
@@ -503,9 +525,9 @@ float AutoTuneEngine::processPitchSample (
             channel.grainB.active = false;
     }
 
-    // ------------------------------------------------------------
+    // ============================================================
     // NORMALIZE OVERLAP
-    // ------------------------------------------------------------
+    // ============================================================
 
     if (windowSum > 1.0e-5f)
     {
@@ -516,9 +538,9 @@ float AutoTuneEngine::processPitchSample (
         output = input;
     }
 
-    // ------------------------------------------------------------
+    // ============================================================
     // RESTART INACTIVE GRAIN
-    // ------------------------------------------------------------
+    // ============================================================
 
     if (!channel.grainA.active
         && channel.grainB.active)
@@ -554,41 +576,44 @@ float AutoTuneEngine::processSample (
     float input,
     bool isRightChannel)
 {
-    // IMPORTANT:
-    // The parameter is called isRightChannel so it does not
-    // conflict with the rightChannel member variable.
-
     auto& channel =
         isRightChannel
             ? rightChannel
             : leftChannel;
 
-    // ------------------------------------------------------------
-    // PITCH DETECTION
-    // ------------------------------------------------------------
+    // ============================================================
+    // IMPORTANT:
+    // Pitch detector is mono/shared.
+    //
+    // We ONLY feed the detector with the LEFT channel.
+    // Otherwise L/R samples would be mixed together and the
+    // pitch detector could see completely artificial periods.
+    // ============================================================
 
-    const float detected =
-        detector.process (
-            input);
-
-    // Update pitch/correction only once per stereo sample pair.
-    if (!isRightChannel && detected > 0.0f)
+    if (!isRightChannel)
     {
-        currentPitch =
-            detected;
+        const float detected =
+            detector.process (
+                input);
 
-        const float detectedMidi =
-            frequencyToMidi (
-                currentPitch);
+        if (detected > 0.0f)
+        {
+            currentPitch =
+                detected;
 
-        targetPitch =
-            getTargetMidiNote (
-                detectedMidi);
+            const float detectedMidi =
+                frequencyToMidi (
+                    currentPitch);
+
+            targetPitch =
+                getTargetMidiNote (
+                    detectedMidi);
+        }
     }
 
-    // ------------------------------------------------------------
+    // ============================================================
     // NO VALID PITCH
-    // ------------------------------------------------------------
+    // ============================================================
 
     if (currentPitch <= 0.0f
         || targetPitch <= 0.0f)
@@ -596,9 +621,9 @@ float AutoTuneEngine::processSample (
         return input;
     }
 
-    // ------------------------------------------------------------
-    // CALCULATE CORRECTION
-    // ------------------------------------------------------------
+    // ============================================================
+    // CURRENT CORRECTION
+    // ============================================================
 
     const float detectedMidi =
         frequencyToMidi (
@@ -619,32 +644,33 @@ float AutoTuneEngine::processSample (
         desiredSemitones
         * amountNormalized;
 
-    // ------------------------------------------------------------
+    // ============================================================
     // RETUNE SPEED
-    // ------------------------------------------------------------
+    // ============================================================
 
     const float coefficient =
         getRetuneCoefficient();
 
     smoothedCorrection +=
-        (amountScaled - smoothedCorrection)
+        (amountScaled
+         - smoothedCorrection)
         * coefficient;
 
     correctionSemitones =
         smoothedCorrection;
 
-    // ------------------------------------------------------------
-    // SEMITONES -> RATIO
-    // ------------------------------------------------------------
+    // ============================================================
+    // SEMITONES -> PITCH RATIO
+    // ============================================================
 
     const float pitchRatio =
         std::pow (
             2.0f,
             correctionSemitones / 12.0f);
 
-    // ------------------------------------------------------------
+    // ============================================================
     // REALTIME PITCH SHIFT
-    // ------------------------------------------------------------
+    // ============================================================
 
     return
         processPitchSample (
