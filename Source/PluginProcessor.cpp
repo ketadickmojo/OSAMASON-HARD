@@ -2,51 +2,161 @@
 #include "PluginEditor.h"
 
 VocalChainOneProcessor::VocalChainOneProcessor()
-    : AudioProcessor (BusesProperties()
-                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "PARAMS", createLayout())
+    : AudioProcessor (
+        BusesProperties()
+            .withInput (
+                "Input",
+                juce::AudioChannelSet::stereo(),
+                true)
+            .withOutput (
+                "Output",
+                juce::AudioChannelSet::stereo(),
+                true)),
+      apvts (
+          *this,
+          nullptr,
+          "PARAMS",
+          createLayout())
 {
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout VocalChainOneProcessor::createLayout()
+// ================================================================
+// PARAMETER LAYOUT
+// ================================================================
+
+juce::AudioProcessorValueTreeState::ParameterLayout
+VocalChainOneProcessor::createLayout()
 {
     using namespace juce;
 
     std::vector<std::unique_ptr<RangedAudioParameter>> params;
 
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "tone", 1 },
-        "Теплее -- Ярче",
-        NormalisableRange<float> (-50.0f, 50.0f, 0.1f),
-        0.0f));
+    // ============================================================
+    // MAIN VOCAL CHAIN
+    // ============================================================
 
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "punch", 1 },
-        "Сжатие вокала",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        70.0f));
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "tone", 1 },
+            "Теплее -- Ярче",
+            NormalisableRange<float> (
+                -50.0f,
+                50.0f,
+                0.1f),
+            0.0f));
 
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "loudness", 1 },
-        "Громкость",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        50.0f));
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "punch", 1 },
+            "Сжатие вокала",
+            NormalisableRange<float> (
+                0.0f,
+                100.0f,
+                0.1f),
+            70.0f));
 
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "grit", 1 },
-        "Грязь",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        40.0f));
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "loudness", 1 },
+            "Громкость",
+            NormalisableRange<float> (
+                0.0f,
+                100.0f,
+                0.1f),
+            50.0f));
 
-    params.push_back (std::make_unique<AudioParameterFloat>(
-        ParameterID { "space", 1 },
-        "Пространство",
-        NormalisableRange<float> (0.0f, 100.0f, 0.1f),
-        45.0f));
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "grit", 1 },
+            "Грязь",
+            NormalisableRange<float> (
+                0.0f,
+                100.0f,
+                0.1f),
+            40.0f));
 
-    return { params.begin(), params.end() };
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "space", 1 },
+            "Пространство",
+            NormalisableRange<float> (
+                0.0f,
+                100.0f,
+                0.1f),
+            45.0f));
+
+    // ============================================================
+    // AUTO-TUNE
+    // ============================================================
+
+    params.push_back (
+        std::make_unique<AudioParameterBool>(
+            ParameterID { "autotuneEnabled", 1 },
+            "Auto-Tune Enabled",
+            false));
+
+    params.push_back (
+        std::make_unique<AudioParameterChoice>(
+            ParameterID { "autotuneKey", 1 },
+            "Auto-Tune Key",
+            StringArray
+            {
+                "C",
+                "C#",
+                "D",
+                "D#",
+                "E",
+                "F",
+                "F#",
+                "G",
+                "G#",
+                "A",
+                "A#",
+                "B"
+            },
+            0));
+
+    params.push_back (
+        std::make_unique<AudioParameterChoice>(
+            ParameterID { "autotuneScale", 1 },
+            "Auto-Tune Scale",
+            StringArray
+            {
+                "Major",
+                "Minor",
+                "Chromatic"
+            },
+            0));
+
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "autotuneRetune", 1 },
+            "Auto-Tune Retune Speed",
+            NormalisableRange<float> (
+                0.0f,
+                100.0f,
+                0.1f),
+            50.0f));
+
+    params.push_back (
+        std::make_unique<AudioParameterFloat>(
+            ParameterID { "autotuneAmount", 1 },
+            "Auto-Tune Amount",
+            NormalisableRange<float> (
+                0.0f,
+                100.0f,
+                0.1f),
+            100.0f));
+
+    return {
+        params.begin(),
+        params.end()
+    };
 }
+
+// ================================================================
+// PREPARE
+// ================================================================
 
 void VocalChainOneProcessor::prepareToPlay (
     double sampleRate,
@@ -69,7 +179,8 @@ void VocalChainOneProcessor::prepareToPlay (
     juce::dsp::ProcessSpec spec
     {
         sampleRate,
-        (juce::uint32) samplesPerBlock,
+        static_cast<juce::uint32> (
+            samplesPerBlock),
         1
     };
 
@@ -91,7 +202,8 @@ void VocalChainOneProcessor::prepareToPlay (
     juce::dsp::ProcessSpec stereoSpec
     {
         sampleRate,
-        (juce::uint32) samplesPerBlock,
+        static_cast<juce::uint32> (
+            samplesPerBlock),
         2
     };
 
@@ -101,86 +213,125 @@ void VocalChainOneProcessor::prepareToPlay (
     updateAllStages();
 }
 
+// ================================================================
+// UPDATE PARAMETERS
+// ================================================================
+
 void VocalChainOneProcessor::updateAllStages()
 {
     const float tone =
-        apvts.getRawParameterValue ("tone")->load();
+        apvts.getRawParameterValue (
+            "tone")->load();
 
     const float punch =
-        apvts.getRawParameterValue ("punch")->load();
+        apvts.getRawParameterValue (
+            "punch")->load();
 
     const float grit =
-        apvts.getRawParameterValue ("grit")->load();
+        apvts.getRawParameterValue (
+            "grit")->load();
 
     const float space =
-        apvts.getRawParameterValue ("space")->load();
+        apvts.getRawParameterValue (
+            "space")->load();
+
+    // ============================================================
+    // AUTO-TUNE PARAMETERS
+    // ============================================================
+
+    const bool autoTuneEnabled =
+        apvts.getRawParameterValue (
+            "autotuneEnabled")->load() > 0.5f;
+
+    const int autoTuneKey =
+        static_cast<int> (
+            apvts.getRawParameterValue (
+                "autotuneKey")->load());
+
+    const int autoTuneScale =
+        static_cast<int> (
+            apvts.getRawParameterValue (
+                "autotuneScale")->load());
+
+    const float autoTuneRetune =
+        apvts.getRawParameterValue (
+            "autotuneRetune")->load();
+
+    const float autoTuneAmount =
+        apvts.getRawParameterValue (
+            "autotuneAmount")->load();
+
+    autoTune.setEnabled (
+        autoTuneEnabled);
+
+    autoTune.setKey (
+        autoTuneKey);
+
+    autoTune.setScale (
+        static_cast<AutoTuneEngine::ScaleType> (
+            juce::jlimit (
+                0,
+                2,
+                autoTuneScale)));
+
+    autoTune.setRetuneSpeed (
+        autoTuneRetune);
+
+    autoTune.setAmount (
+        autoTuneAmount);
+
+    // ============================================================
+    // MAIN CHAIN
+    // ============================================================
 
     for (auto& c : chains)
     {
-        // ========================================================
         // 1. Initial Correction EQ
-        // ========================================================
-
         c.correctionEq.update (tone);
 
-        // ========================================================
         // 2. Fruity Limiter
-        // ========================================================
-
         c.limiter.update();
 
-        // ========================================================
         // 3. Vocal Parametric EQ
-        // ========================================================
-
         c.eq7.update (tone);
 
-        // ========================================================
         // 4. Vintage Compressor
-        // ========================================================
-
         c.compressor.update (punch);
 
-        // ========================================================
         // 5. Soundgoodizer C
-        // ========================================================
-
         c.soundgoodizer.update (45.0f);
 
-        // ========================================================
         // 6. Fast Dist
-        // ========================================================
-
         c.fastDist.update (grit);
 
-        // ========================================================
         // 7. Fresh Air
-        // ========================================================
-
         c.freshAir.update (tone);
     }
 
-    // ============================================================
     // 8. Flangus
-    // ============================================================
-
     flangus.update (space);
 
-    // ============================================================
     // 9. Reverb
-    // ============================================================
-
     reverb.update (space);
 }
+
+// ================================================================
+// BUS LAYOUT
+// ================================================================
 
 bool VocalChainOneProcessor::isBusesLayoutSupported (
     const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet()
-                == juce::AudioChannelSet::stereo()
+    return
+        layouts.getMainOutputChannelSet()
+            == juce::AudioChannelSet::stereo()
         && layouts.getMainInputChannelSet()
-                == juce::AudioChannelSet::stereo();
+            == juce::AudioChannelSet::stereo();
 }
+
+// ================================================================
+// PROCESS BLOCK
+// ================================================================
 
 void VocalChainOneProcessor::processBlock (
     juce::AudioBuffer<float>& buffer,
@@ -197,23 +348,14 @@ void VocalChainOneProcessor::processBlock (
     if (numChannels == 0)
         return;
 
-    // ============================================================
-    // UPDATE PARAMETERS
-    // ============================================================
-
     updateAllStages();
 
     // ============================================================
     // 1. AUTO-TUNE
-    //
-    // Auto-Tune должен идти ПЕРЕД всей остальной цепочкой.
-    //
-    // Сейчас движок умеет обнаруживать pitch, но пока ещё
-    // не изменяет высоту звука. Поэтому сигнал здесь пока
-    // фактически проходит без изменения pitch.
     // ============================================================
 
-    autoTune.process (buffer);
+    autoTune.process (
+        buffer);
 
     // ============================================================
     // CHANNEL POINTERS
@@ -229,14 +371,6 @@ void VocalChainOneProcessor::processBlock (
 
     // ============================================================
     // 2-7. MONO PER-CHANNEL PROCESSING
-    //
-    // Correction EQ
-    // Limiter
-    // EQ
-    // Compressor
-    // Soundgoodizer
-    // Fast Dist
-    // Fresh Air
     // ============================================================
 
     for (int i = 0;
@@ -412,7 +546,7 @@ void VocalChainOneProcessor::processBlock (
     // 50  ->  0 dB
     // 100 -> +6 dB
     //
-    // "Громкость" НЕ меняет limiter/compressor.
+    // Loudness does NOT control the limiter.
     // ============================================================
 
     const float loudness =
@@ -438,11 +572,20 @@ void VocalChainOneProcessor::processBlock (
         outputGain);
 }
 
+// ================================================================
+// EDITOR
+// ================================================================
+
 juce::AudioProcessorEditor*
 VocalChainOneProcessor::createEditor()
 {
-    return new VocalChainOneEditor (*this);
+    return new VocalChainOneEditor (
+        *this);
 }
+
+// ================================================================
+// SAVE STATE
+// ================================================================
 
 void VocalChainOneProcessor::getStateInformation (
     juce::MemoryBlock& destData)
@@ -459,6 +602,10 @@ void VocalChainOneProcessor::getStateInformation (
             destData);
     }
 }
+
+// ================================================================
+// LOAD STATE
+// ================================================================
 
 void VocalChainOneProcessor::setStateInformation (
     const void* data,
@@ -478,6 +625,10 @@ void VocalChainOneProcessor::setStateInformation (
                 *xml));
     }
 }
+
+// ================================================================
+// FACTORY
+// ================================================================
 
 juce::AudioProcessor*
 JUCE_CALLTYPE createPluginFilter()
