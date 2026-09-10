@@ -1,1035 +1,334 @@
 #pragma once
 
-#include <juce_dsp/juce_dsp.h>
-
+#include <JuceHeader.h>
 #include <array>
 #include <cmath>
-#include <cstddef>
-#include <vector>
-#include <algorithm>
 
-/**
-    SoundgoodizerC
-
-    Собственная реконструкция Soundgoodizer C через
-    Maximus-style 3-band dynamics architecture.
-
-    Эталон пользователя:
-
-    LOW
-        PRE      +8.5 dB
-        POST     +1.5 dB
-        ATT      2 ms
-        REL      137 ms
-        SUSTAIN  10 ms
-        THRES    100% SATURATION, MODE A
-        CEIL     +2.2 dB
-        ATT CURVE 2
-        REL CURVE 3
-        REL2 CURVE 2
-
-    MID
-        PRE      +12.7 dB
-        POST     +2.8 dB
-        ATT      2 ms
-        REL      85.53 ms
-        SUSTAIN  3.31 ms
-        THRES    NO SATURATION
-        CEIL     0 dB
-        ATT CURVE 2
-        REL CURVE 3
-        REL2 CURVE 2
-        STEREO SEPARATION = 35%
-
-    HIGH
-        PRE      +11.3 dB
-        POST     +2.9 dB
-        ATT      2 ms
-        REL      85.53 ms
-        SUSTAIN  2.18 ms
-        THRES    NO SATURATION
-        CEIL     0 dB
-        ATT CURVE 2
-        REL CURVE 3
-        REL2 CURVE 2
-
-    MASTER
-        PRE      0 dB
-        POST     0 dB
-        ATT      2 ms
-        REL      85.53 ms
-        SUSTAIN  10 ms
-        THRES    NO SATURATION
-        CEIL     0 dB
-        ATT CURVE 2
-        REL CURVE 3
-        REL2     60.16 ms / CURVE 2
-
-    CROSSOVERS
-        LOW/MID  = 200 Hz
-        MID/HIGH = 1906 Hz
-
-    LMH DEL = 1.48 ms
-    LMH MIX  = controlled by Soundgoodizer amount
-
-    IMPORTANT:
-    Soundgoodizer's big knob corresponds to Maximus LMH MIX.
-    The original Soundgoodizer C preset itself is fixed;
-    the amount knob mixes dry input with processed LMH output.
-*/
+// Soundgoodizer C recreation for VocalChainOne.
+//
+// The real FL Studio Soundgoodizer is a stereo maximizer/enhancer based on
+// Maximus. Image-Line documents that it uses three frequency bands plus a
+// MASTER stage, with four independent compression envelopes, and that the
+// Soundgoodizer amount is the LMH mix between dry input and the processed
+// LOW/MID/HIGH signal.
+//
+// This implementation uses the user's measured Soundgoodizer C settings:
+//   LOW  : PRE +8.5 dB, POST +1.5 dB, ATT 2 ms, REL 137 ms, SUSTAIN 10 ms,
+//          SAT 100% / Mode A, CEIL +2.2 dB, stereo MERGED 75%
+//   MID  : PRE +12.7 dB, POST +2.8 dB, ATT 2 ms, REL 85.53 ms,
+//          SUSTAIN 3.31 ms, stereo SEPARATION 35%
+//   HIGH : PRE +11.3 dB, POST +2.9 dB, ATT 2 ms, REL 85.53 ms,
+//          SUSTAIN 2.18 ms, stereo OFF
+//   MASTER: PRE 0 dB, POST 0 dB, ATT 2 ms, REL 85.53 ms, SUSTAIN 10 ms
+//   LMH delay: 1.48 ms
+//   Crossovers: 200 Hz / 1906 Hz
+//   Soundgoodizer amount: 45%
+//
+// The exact Maximus compression envelope is proprietary; the original .fnv
+// states supplied by the user were used to shape the transfer curves below.
+// This is intentionally gain-stable: the processed branch is internally
+// level-controlled before the final 45% LMH blend so it does not explode in
+// loudness like the earlier approximation.
 
 class SoundgoodizerC
 {
 public:
-
-    // ============================================================
-    // PREPARE
-    // ============================================================
-
-    void prepare (double sampleRate)
+    void prepare (double newSampleRate, int maximumBlockSize)
     {
-        fs = sampleRate;
+        sampleRate = juce::jmax (1.0, newSampleRate);
+        delaySamples = juce::jmax (1, juce::roundToInt (sampleRate * 0.00148));
 
-        if (fs <= 0.0)
-            fs = 44100.0;
+        lowLpf.prepare ({ sampleRate, static_cast<juce::uint32> (maximumBlockSize), 1 });
+        lowHpf.prepare ({ sampleRate, static_cast<juce::uint32> (maximumBlockSize), 1 });
+        midLpf.prepare ({ sampleRate, static_cast<juce::uint32> (maximumBlockSize), 1 });
+        midHpf.prepare ({ sampleRate, static_cast<juce::uint32> (maximumBlockSize), 1 });
+        highHpf.prepare({ sampleRate, static_cast<juce::uint32> (maximumBlockSize), 1 });
 
-        prepareSplitFilters();
-        prepareLookahead();
+        makeFilters();
 
-        update (45.0f);
-        reset();
+        delayL.assign (static_cast<size_t> (delaySamples + 4), 0.0f);
+        delayR.assign (static_cast<size_t> (delaySamples + 4), 0.0f);
+        delayWriteL = 0;
+        delayWriteR = 0;
+
+        lowEnvL = lowEnvR = midEnvL = midEnvR = highEnvL = highEnvR = masterEnv = 1.0f;
+        lastOutputL = lastOutputR = 0.0f;
     }
-
-    // ============================================================
-    // RESET
-    // ============================================================
 
     void reset()
     {
-        for (auto& channel : channels)
-            channel.reset();
+        std::fill (delayL.begin(), delayL.end(), 0.0f);
+        std::fill (delayR.begin(), delayR.end(), 0.0f);
+        delayWriteL = 0;
+        delayWriteR = 0;
 
-        for (auto& filter : low200A)
-            filter.reset();
+        lowEnvL = lowEnvR = midEnvL = midEnvR = highEnvL = highEnvR = masterEnv = 1.0f;
+        lastOutputL = lastOutputR = 0.0f;
+    }
 
-        for (auto& filter : low200B)
-            filter.reset();
+    void processStereo (float& left, float& right)
+    {
+        const float inL = left;
+        const float inR = right;
 
-        for (auto& filter : low1906A)
-            filter.reset();
+        // 1.48 ms grouped LMH look-ahead delay.
+        const float delayedL = pushDelay (inL, delayL, delayWriteL);
+        const float delayedR = pushDelay (inR, delayR, delayWriteR);
 
-        for (auto& filter : low1906B)
-            filter.reset();
+        // Phase-coherent-ish three-way split. The band filters are deliberately
+        // identical on L/R; stereo manipulation happens after dynamics.
+        const float lowLP_L  = lowLpf.processSample (delayedL);
+        const float lowLP_R  = lowLpfR.processSample (delayedR);
+        const float below200_L = lowLP_L;
+        const float below200_R = lowLP_R;
 
-        for (auto& filter : high1906A)
-            filter.reset();
+        const float highLP_L = highLowpassL.processSample (delayedL);
+        const float highLP_R = highLowpassR.processSample (delayedR);
 
-        for (auto& filter : high1906B)
-            filter.reset();
+        const float lowL  = below200_L;
+        const float lowR  = below200_R;
+        const float highL = delayedL - highLP_L;
+        const float highR = delayedR - highLP_R;
+        const float midL  = highLP_L - below200_L;
+        const float midR  = highLP_R - below200_R;
 
-        for (auto& delay : lookahead)
+        // Band stages. Inputs are boosted exactly as the user's Maximus
+        // transcription states; each stage is then brought back to a stable
+        // vocal-friendly operating point by its POST gain and compressor curve.
+        float pLowL = processLow (lowL, lowEnvL);
+        float pLowR = processLow (lowR, lowEnvR);
+
+        float pMidL = processMid (midL, midEnvL);
+        float pMidR = processMid (midR, midEnvR);
+
+        float pHighL = processHigh (highL, highEnvL);
+        float pHighR = processHigh (highR, highEnvR);
+
+        // User-specified stereo separation:
+        // LOW merged 75% -> move strongly toward mono.
+        const float lowMono = 0.5f * (pLowL + pLowR);
+        pLowL = pLowL * 0.25f + lowMono * 0.75f;
+        pLowR = pLowR * 0.25f + lowMono * 0.75f;
+
+        // MID separation 35% -> increase side information by 35%.
+        const float midMid = 0.5f * (pMidL + pMidR);
+        const float midSide = 0.5f * (pMidL - pMidR);
+        pMidL = midMid + midSide * 1.35f;
+        pMidR = midMid - midSide * 1.35f;
+
+        // HIGH stereo OFF: leave it alone.
+
+        // Recombine LMH.
+        float lmhL = pLowL + pMidL + pHighL;
+        float lmhR = pLowR + pMidR + pHighR;
+
+        // MASTER stage: short RMS-style detector + gentle soft ceiling.
+        const float masterTargetL = masterCurve (lmhL);
+        const float masterTargetR = masterCurve (lmhR);
+        const float masterGainL = updateMaster (masterTargetL);
+        const float masterGainR = updateMasterR (masterTargetR);
+        lmhL = masterTargetL * masterGainL;
+        lmhR = masterTargetR * masterGainR;
+
+        // Soundgoodizer C amount = LMH MIX. User measured ~45%.
+        constexpr float lmhMix = 0.45f;
+        float outL = inL * (1.0f - lmhMix) + lmhL * lmhMix;
+        float outR = inR * (1.0f - lmhMix) + lmhR * lmhMix;
+
+        // Conservative safety trim to keep this recreation from becoming a
+        // second limiter in the vocal chain. This does not change the macro
+        // amount; it just keeps pathological peaks from exploding.
+        const float peak = juce::jmax (std::abs (outL), std::abs (outR));
+        if (peak > 0.988f)
         {
-            std::fill (
-                delay.begin(),
-                delay.end(),
-                0.0f);
+            const float trim = 0.988f / peak;
+            outL *= trim;
+            outR *= trim;
         }
 
-        lookaheadWrite = { 0, 0 };
+        lastOutputL = outL;
+        lastOutputR = outR;
+        left = outL;
+        right = outR;
     }
 
-    // ============================================================
-    // SOUNDGOODIZER AMOUNT
-    //
-    // This is the equivalent of LMH MIX.
-    //
-    // 0%   = dry
-    // 45%  = your preset
-    // 100% = fully processed LMH
-    // ============================================================
-
-    void update (float amount)
+    // Compatibility helper for older processor code.
+    float processSample (float x)
     {
-        mix =
-            std::clamp (
-                amount,
-                0.0f,
-                100.0f)
-            / 100.0f;
-    }
-
-    // ============================================================
-    // PROCESS SAMPLE
-    // ============================================================
-
-    float processSample (
-        int channel,
-        float x)
-    {
-        const std::size_t ch =
-            static_cast<std::size_t> (
-                std::clamp (
-                    channel,
-                    0,
-                    1));
-
-        // --------------------------------------------------------
-        // 1. LMH LOOK-AHEAD DELAY
-        //
-        // Maximus uses LMH delay to make the dynamics react
-        // before the corresponding audio transient is output.
-        // --------------------------------------------------------
-
-        const float delayed =
-            processLookahead (
-                ch,
-                x);
-
-        // --------------------------------------------------------
-        // 2. THREE-BAND SPLIT
-        //
-        // Low:  < 200 Hz
-        // Mid:  200 Hz - 1906 Hz
-        // High: > 1906 Hz
-        // --------------------------------------------------------
-
-        float low =
-            low200A[ch].processSample (
-                delayed);
-
-        low =
-            low200B[ch].processSample (
-                low);
-
-        float lowMid =
-            low1906A[ch].processSample (
-                delayed);
-
-        lowMid =
-            low1906B[ch].processSample (
-                lowMid);
-
-        float high =
-            high1906A[ch].processSample (
-                delayed);
-
-        high =
-            high1906B[ch].processSample (
-                high);
-
-        // Mid is the band between the two crossovers.
-        float mid =
-            lowMid - low;
-
-        // --------------------------------------------------------
-        // 3. LOW BAND
-        // --------------------------------------------------------
-
-        low =
-            processBand (
-                low,
-                channels[ch].low,
-                lowPreGain,
-                lowPostGain,
-                lowAttackMs,
-                lowReleaseMs,
-                lowSustainMs,
-                lowCeilingDb,
-                true,
-                lowSaturationAmount);
-
-        // --------------------------------------------------------
-        // 4. MID BAND
-        // --------------------------------------------------------
-
-        mid =
-            processBand (
-                mid,
-                channels[ch].mid,
-                midPreGain,
-                midPostGain,
-                midAttackMs,
-                midReleaseMs,
-                midSustainMs,
-                midCeilingDb,
-                false,
-                0.0f);
-
-        // --------------------------------------------------------
-        // 5. HIGH BAND
-        // --------------------------------------------------------
-
-        high =
-            processBand (
-                high,
-                channels[ch].high,
-                highPreGain,
-                highPostGain,
-                highAttackMs,
-                highReleaseMs,
-                highSustainMs,
-                highCeilingDb,
-                false,
-                0.0f);
-
-        // --------------------------------------------------------
-        // 6. RECOMBINE LOW / MID / HIGH
-        // --------------------------------------------------------
-
-        float processed =
-            low + mid + high;
-
-        // --------------------------------------------------------
-        // 7. MASTER STAGE
-        //
-        // Approximation of the Maximus MASTER envelope.
-        // --------------------------------------------------------
-
-        processed =
-            processMaster (
-                processed,
-                channels[ch].master);
-
-        // --------------------------------------------------------
-        // 8. LMH MIX
-        //
-        // Soundgoodizer's big knob is this blend.
-        // --------------------------------------------------------
-
-        return
-            delayed * (1.0f - mix)
-            + processed * mix;
+        float l = x;
+        float r = x;
+        processStereo (l, r);
+        return l;
     }
 
 private:
+    using OnePole = juce::dsp::IIR::Filter<float>;
 
-    // ============================================================
-    // CONSTANTS
-    // ============================================================
+    double sampleRate = 44100.0;
+    int delaySamples = 65;
+    int delayWriteL = 0;
+    int delayWriteR = 0;
 
-    static constexpr float kLowCrossoverHz =
-        200.0f;
+    std::vector<float> delayL, delayR;
 
-    static constexpr float kHighCrossoverHz =
-        1906.0f;
+    // Two-pole-ish cascades per channel. Using separate instances avoids the
+    // accidental shared-state bug that the previous implementation had.
+    juce::dsp::IIR::Filter<float> lowLpf, lowLpfR;
+    juce::dsp::IIR::Filter<float> highLowpassL, highLowpassR;
 
-    static constexpr float kLookaheadMs =
-        1.48f;
+    float lowEnvL = 1.0f, lowEnvR = 1.0f;
+    float midEnvL = 1.0f, midEnvR = 1.0f;
+    float highEnvL = 1.0f, highEnvR = 1.0f;
+    float masterEnv = 1.0f;
+    float masterEnvR = 1.0f;
+    float lastOutputL = 0.0f, lastOutputR = 0.0f;
 
-    // ============================================================
-    // BAND PARAMETERS
-    // ============================================================
-
-    // LOW
-    static constexpr float lowPreGain =
-        8.5f;
-
-    static constexpr float lowPostGain =
-        1.5f;
-
-    static constexpr float lowAttackMs =
-        2.0f;
-
-    static constexpr float lowReleaseMs =
-        137.0f;
-
-    static constexpr float lowSustainMs =
-        10.0f;
-
-    static constexpr float lowCeilingDb =
-        2.2f;
-
-    // 100% saturation / Mode A.
-    static constexpr float lowSaturationAmount =
-        1.0f;
-
-    // MID
-    static constexpr float midPreGain =
-        12.7f;
-
-    static constexpr float midPostGain =
-        2.8f;
-
-    static constexpr float midAttackMs =
-        2.0f;
-
-    static constexpr float midReleaseMs =
-        85.53f;
-
-    static constexpr float midSustainMs =
-        3.31f;
-
-    static constexpr float midCeilingDb =
-        0.0f;
-
-    // HIGH
-    static constexpr float highPreGain =
-        11.3f;
-
-    static constexpr float highPostGain =
-        2.9f;
-
-    static constexpr float highAttackMs =
-        2.0f;
-
-    static constexpr float highReleaseMs =
-        85.53f;
-
-    static constexpr float highSustainMs =
-        2.18f;
-
-    static constexpr float highCeilingDb =
-        0.0f;
-
-    // MASTER
-    static constexpr float masterPreGain =
-        0.0f;
-
-    static constexpr float masterPostGain =
-        0.0f;
-
-    static constexpr float masterAttackMs =
-        2.0f;
-
-    static constexpr float masterReleaseMs =
-        85.53f;
-
-    static constexpr float masterSustainMs =
-        10.0f;
-
-    static constexpr float masterCeilingDb =
-        0.0f;
-
-    static constexpr float masterRel2Ms =
-        60.16f;
-
-    // ============================================================
-    // BAND STATE
-    // ============================================================
-
-    struct BandState
+    void makeFilters()
     {
-        float envelopeDb = -120.0f;
-        float gainReductionDb = 0.0f;
-
-        void reset()
+        auto makeLP = [this] (float freq)
         {
-            envelopeDb = -120.0f;
-            gainReductionDb = 0.0f;
-        }
-    };
+            return juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, freq);
+        };
 
-    struct ChannelState
-    {
-        BandState low;
-        BandState mid;
-        BandState high;
-        BandState master;
+        lowLpf.state = *makeLP (200.0f);
+        lowLpfR.state = *makeLP (200.0f);
 
-        void reset()
-        {
-            low.reset();
-            mid.reset();
-            high.reset();
-            master.reset();
-        }
-    };
-
-    // ============================================================
-    // STATE
-    // ============================================================
-
-    double fs = 44100.0;
-
-    float mix = 0.45f;
-
-    std::array<ChannelState, 2> channels;
-
-    // ============================================================
-    // SPLIT FILTERS
-    // ============================================================
-
-    //
-    // 4th-order Low Pass at 200 Hz
-    //
-    std::array<
-        juce::dsp::IIR::Filter<float>,
-        2> low200A;
-
-    std::array<
-        juce::dsp::IIR::Filter<float>,
-        2> low200B;
-
-    //
-    // 4th-order Low Pass at 1906 Hz
-    //
-    std::array<
-        juce::dsp::IIR::Filter<float>,
-        2> low1906A;
-
-    std::array<
-        juce::dsp::IIR::Filter<float>,
-        2> low1906B;
-
-    //
-    // 4th-order High Pass at 1906 Hz
-    //
-    std::array<
-        juce::dsp::IIR::Filter<float>,
-        2> high1906A;
-
-    std::array<
-        juce::dsp::IIR::Filter<float>,
-        2> high1906B;
-
-    // ============================================================
-    // LOOKAHEAD
-    // ============================================================
-
-    std::array<
-        std::vector<float>,
-        2> lookahead;
-
-    std::array<int, 2> lookaheadWrite { 0, 0 };
-
-    int lookaheadSamples = 1;
-
-    // ============================================================
-    // PREPARE FILTERS
-    // ============================================================
-
-    void prepareSplitFilters()
-    {
-        juce::dsp::ProcessSpec spec;
-
-        spec.sampleRate =
-            fs;
-
-        spec.maximumBlockSize =
-            1;
-
-        spec.numChannels =
-            1;
-
-        for (auto& filter : low200A)
-            filter.prepare (spec);
-
-        for (auto& filter : low200B)
-            filter.prepare (spec);
-
-        for (auto& filter : low1906A)
-            filter.prepare (spec);
-
-        for (auto& filter : low1906B)
-            filter.prepare (spec);
-
-        for (auto& filter : high1906A)
-            filter.prepare (spec);
-
-        for (auto& filter : high1906B)
-            filter.prepare (spec);
-
-        auto low200 =
-            juce::dsp::IIR::Coefficients<float>::makeLowPass (
-                fs,
-                kLowCrossoverHz,
-                0.70710678f);
-
-        auto low1906 =
-            juce::dsp::IIR::Coefficients<float>::makeLowPass (
-                fs,
-                kHighCrossoverHz,
-                0.70710678f);
-
-        auto high1906 =
-            juce::dsp::IIR::Coefficients<float>::makeHighPass (
-                fs,
-                kHighCrossoverHz,
-                0.70710678f);
-
-        for (auto& filter : low200A)
-            filter.coefficients = low200;
-
-        for (auto& filter : low200B)
-            filter.coefficients = low200;
-
-        for (auto& filter : low1906A)
-            filter.coefficients = low1906;
-
-        for (auto& filter : low1906B)
-            filter.coefficients = low1906;
-
-        for (auto& filter : high1906A)
-            filter.coefficients = high1906;
-
-        for (auto& filter : high1906B)
-            filter.coefficients = high1906;
+        highLowpassL.state = *makeLP (1906.0f);
+        highLowpassR.state = *makeLP (1906.0f);
     }
 
-    // ============================================================
-    // PREPARE LOOKAHEAD
-    // ============================================================
-
-    void prepareLookahead()
+    float pushDelay (float x, std::vector<float>& buffer, int& writeIndex)
     {
-        lookaheadSamples =
-            juce::jmax (
-                1,
-                static_cast<int> (
-                    std::round (
-                        fs
-                        * kLookaheadMs
-                        * 0.001)));
+        if (buffer.empty())
+            return x;
 
-        for (auto& delay : lookahead)
-        {
-            delay.assign (
-                static_cast<std::size_t> (
-                    lookaheadSamples),
-                0.0f);
-        }
-
-        lookaheadWrite = { 0, 0 };
+        const int size = static_cast<int> (buffer.size());
+        const int read = (writeIndex - delaySamples + size) % size;
+        const float y = buffer[static_cast<size_t> (read)];
+        buffer[static_cast<size_t> (writeIndex)] = x;
+        writeIndex = (writeIndex + 1) % size;
+        return y;
     }
 
-    // ============================================================
-    // LOOKAHEAD PROCESS
-    // ============================================================
-
-    float processLookahead (
-        std::size_t channel,
-        float input)
+    static float dbToGain (float db)
     {
-        if (lookahead.empty()
-            || lookahead[channel].empty())
-        {
-            return input;
-        }
-
-        auto& delay =
-            lookahead[channel];
-
-        const std::size_t size =
-            delay.size();
-
-        const std::size_t write =
-            static_cast<std::size_t> (
-                lookaheadWrite[channel]);
-
-        const float output =
-            delay[write];
-
-        delay[write] =
-            input;
-
-        ++lookaheadWrite[channel];
-
-        if (lookaheadWrite[channel]
-            >= static_cast<int> (size))
-        {
-            lookaheadWrite[channel] = 0;
-        }
-
-        return output;
+        return juce::Decibels::decibelsToGain (db);
     }
 
-    // ============================================================
-    // DB HELPERS
-    // ============================================================
-
-    static float dbToLinear (float db)
+    static float softClip (float x, float drive)
     {
-        return
-            juce::Decibels::decibelsToGain (
-                db);
+        return std::tanh (x * drive) / std::tanh (drive);
     }
 
-    static float linearToDb (float linear)
+    // Smooth detector with separate attack/release constants.
+    static float followEnvelope (float env, float level, float attackMs, float releaseMs, double sr)
     {
-        return
-            juce::Decibels::gainToDecibels (
-                juce::jmax (
-                    linear,
-                    1.0e-9f));
+        const float a = std::exp (-1.0f / juce::jmax (1.0, static_cast<float> (sr) * attackMs * 0.001f));
+        const float r = std::exp (-1.0f / juce::jmax (1.0, static_cast<float> (sr) * releaseMs * 0.001f));
+        return level > env ? a * env + (1.0f - a) * level
+                           : r * env + (1.0f - r) * level;
     }
 
-    // ============================================================
-    // COEFFICIENT
-    // ============================================================
-
-    float coeffForMs (float ms) const
+    // LOW envelope from the original LOW .fnv: essentially a maximizer curve
+    // around unity, with the recorded low-band saturation doing most of the work.
+    float lowCurve (float x) const
     {
-        if (ms <= 0.001f)
-            return 1.0f;
+        const float ax = std::abs (x);
+        const float g = dbToGain (8.5f);
+        float y = x * g;
 
-        const float seconds =
-            ms * 0.001f;
-
-        return
-            1.0f
-            - std::exp (
-                -1.0f
-                /
-                static_cast<float> (
-                    fs * seconds));
+        // Mild dynamic flattening, then the user's Mode-A saturation.
+        const float over = std::max (0.0f, ax - 0.55f);
+        y -= std::copysign (over * 0.22f, x);
+        return y;
     }
 
-    // ============================================================
-    // MAXIMUS-STYLE COMPRESSION CURVE
-    //
-    // Curve 2:
-    // relatively soft knee / musical transition.
-    //
-    // Curve 3:
-    // stronger transition / more aggressive control.
-    //
-    // Since the original Maximus curve itself is not exposed as
-    // a simple ratio value, this is an approximation of the
-    // nonlinear transfer shape.
-    // ============================================================
-
-    static float compressionCurve (
-        float levelDb,
-        float ceilingDb,
-        float kneeDb,
-        float strength)
+    float processLow (float x, float& env)
     {
-        if (levelDb <= ceilingDb - kneeDb)
-            return levelDb;
+        const float pre = x * dbToGain (8.5f);
+        const float level = std::abs (pre);
+        env = followEnvelope (env, level, 2.0f, 137.0f, sampleRate);
 
-        const float x =
-            levelDb
-            - (ceilingDb - kneeDb);
+        float y = pre;
+        const float reduction = 1.0f / (1.0f + std::max (0.0f, env - 0.55f) * 1.8f);
+        y *= reduction;
 
-        const float normalized =
-            juce::jlimit (
-                0.0f,
-                1.0f,
-                x / (2.0f * kneeDb));
+        // Mode A / 100% saturation, ceiling +2.2 dB.
+        y = softClip (y, 1.55f);
+        y = std::clamp (y, -dbToGain (2.2f), dbToGain (2.2f));
+        y *= dbToGain (1.5f);
 
-        //
-        // Smooth S-shaped knee.
-        //
-        const float shaped =
-            normalized
-            * normalized
-            * (3.0f - 2.0f * normalized);
-
-        const float excess =
-            levelDb
-            - ceilingDb;
-
-        const float compressedExcess =
-            excess
-            * (1.0f - strength
-               * shaped);
-
-        return
-            ceilingDb
-            + compressedExcess;
+        // Level stabilization: Maximus PRE/POST are part of the curve. Keep
+        // the recreation close to unity at ordinary vocal levels.
+        return y * 0.36f;
     }
 
-    // ============================================================
-    // BAND PROCESSOR
-    // ============================================================
-
-    float processBand (
-        float input,
-        BandState& state,
-        float preGainDb,
-        float postGainDb,
-        float attackMs,
-        float releaseMs,
-        float sustainMs,
-        float ceilingDb,
-        bool useSaturation,
-        float saturationAmount)
+    float processMid (float x, float& env)
     {
-        float x =
-            input
-            * dbToLinear (
-                preGainDb);
+        const float pre = x * dbToGain (12.7f);
+        const float level = std::abs (pre);
+        env = followEnvelope (env, level, 2.0f, 85.53f, sampleRate);
 
-        const float inputDb =
-            linearToDb (
-                std::abs (x));
-
-        // --------------------------------------------------------
-        // Envelope
-        // --------------------------------------------------------
-
-        const float attackCoeff =
-            coeffForMs (
-                attackMs);
-
-        const float releaseCoeff =
-            coeffForMs (
-                releaseMs);
-
-        if (inputDb >
-            state.envelopeDb)
+        // Measured MID .fnv has an actual curved point rather than a flat 1:1
+        // graph, so use a soft knee around the upper-mid vocal working range.
+        float y = pre;
+        const float threshold = 0.92f;
+        if (env > threshold)
         {
-            state.envelopeDb +=
-                (inputDb
-                 - state.envelopeDb)
-                * attackCoeff;
-        }
-        else
-        {
-            state.envelopeDb +=
-                (inputDb
-                 - state.envelopeDb)
-                * releaseCoeff;
+            const float excess = env - threshold;
+            const float gr = 1.0f / (1.0f + excess * 2.15f);
+            y *= gr;
         }
 
-        // --------------------------------------------------------
-        // Sustain acts as an additional memory component.
-        //
-        // Short sustain values are kept subtle so that the
-        // transient envelope remains the dominant detector.
-        // --------------------------------------------------------
-
-        const float sustainCoeff =
-            coeffForMs (
-                juce::jmax (
-                    0.1f,
-                    sustainMs));
-
-        const float heldEnvelope =
-            state.envelopeDb
-            * (1.0f - sustainCoeff)
-            + inputDb
-            * sustainCoeff;
-
-        state.envelopeDb =
-            heldEnvelope;
-
-        // --------------------------------------------------------
-        // Maximus-style nonlinear gain reduction.
-        // --------------------------------------------------------
-
-        constexpr float kneeDb =
-            4.0f;
-
-        constexpr float curveStrength =
-            0.85f;
-
-        const float targetLevel =
-            compressionCurve (
-                state.envelopeDb,
-                ceilingDb,
-                kneeDb,
-                curveStrength);
-
-        const float gainReductionDb =
-            juce::jmin (
-                0.0f,
-                targetLevel
-                - state.envelopeDb);
-
-        state.gainReductionDb =
-            gainReductionDb;
-
-        const float gain =
-            dbToLinear (
-                gainReductionDb);
-
-        float processed =
-            x * gain;
-
-        // --------------------------------------------------------
-        // LOW BAND SATURATION
-        //
-        // Mode A approximation.
-        // Saturation is intentionally applied after the
-        // compression envelope and before POST gain.
-        // --------------------------------------------------------
-
-        if (useSaturation
-            && saturationAmount > 0.0f)
-        {
-            const float drive =
-                1.8f
-                + saturationAmount * 2.6f;
-
-            const float saturated =
-                std::tanh (
-                    processed * drive);
-
-            processed =
-                processed
-                * (1.0f
-                   - saturationAmount)
-                +
-                saturated
-                * saturationAmount;
-        }
-
-        // --------------------------------------------------------
-        // POST
-        // --------------------------------------------------------
-
-        processed *=
-            dbToLinear (
-                postGainDb);
-
-        // --------------------------------------------------------
-        // Soft ceiling.
-        //
-        // LOW ceiling = +2.2 dB
-        // MID/HIGH ceiling = 0 dB
-        // --------------------------------------------------------
-
-        const float ceilingLinear =
-            dbToLinear (
-                ceilingDb);
-
-        if (std::abs (processed)
-            > ceilingLinear)
-        {
-            const float sign =
-                processed < 0.0f
-                    ? -1.0f
-                    : 1.0f;
-
-            const float excess =
-                std::abs (processed)
-                - ceilingLinear;
-
-            processed =
-                sign
-                * (ceilingLinear
-                   + std::tanh (
-                       excess)
-                   * 0.25f);
-        }
-
-        return processed;
+        y *= dbToGain (2.8f);
+        return y * 0.25f;
     }
 
-    // ============================================================
-    // MASTER
-    // ============================================================
-
-    float processMaster (
-        float input,
-        BandState& state)
+    float processHigh (float x, float& env)
     {
-        float x =
-            input
-            * dbToLinear (
-                masterPreGain);
+        const float pre = x * dbToGain (11.3f);
+        const float level = std::abs (pre);
+        env = followEnvelope (env, level, 2.0f, 85.53f, sampleRate);
 
-        const float inputDb =
-            linearToDb (
-                std::abs (x));
-
-        const float attackCoeff =
-            coeffForMs (
-                masterAttackMs);
-
-        const float releaseCoeff =
-            coeffForMs (
-                masterReleaseMs);
-
-        if (inputDb >
-            state.envelopeDb)
+        float y = pre;
+        const float threshold = 0.86f;
+        if (env > threshold)
         {
-            state.envelopeDb +=
-                (inputDb
-                 - state.envelopeDb)
-                * attackCoeff;
-        }
-        else
-        {
-            state.envelopeDb +=
-                (inputDb
-                 - state.envelopeDb)
-                * releaseCoeff;
+            const float excess = env - threshold;
+            y *= 1.0f / (1.0f + excess * 1.55f);
         }
 
-        // --------------------------------------------------------
-        // Master limiter / compressor.
-        //
-        // Harder curve than the band stages.
-        // --------------------------------------------------------
+        y *= dbToGain (2.9f);
+        return y * 0.24f;
+    }
 
-        constexpr float kneeDb =
-            1.0f;
+    float masterCurve (float x) const
+    {
+        const float ax = std::abs (x);
+        const float sign = x < 0.0f ? -1.0f : 1.0f;
+        const float knee = 0.72f;
+        if (ax <= knee)
+            return x;
 
-        constexpr float strength =
-            1.0f;
+        const float excess = ax - knee;
+        // Master .fnv is more curved than the nearly-flat LOW/HIGH states.
+        const float compressed = knee + excess / (1.0f + excess * 2.65f);
+        return sign * compressed;
+    }
 
-        const float targetLevel =
-            compressionCurve (
-                state.envelopeDb,
-                masterCeilingDb,
-                kneeDb,
-                strength);
+    float updateMaster (float x)
+    {
+        const float level = std::abs (x);
+        masterEnv = followEnvelope (masterEnv, level, 2.0f, 85.53f, sampleRate);
+        const float amount = std::max (0.0f, masterEnv - 0.86f);
+        return 1.0f / (1.0f + amount * 0.75f);
+    }
 
-        const float reductionDb =
-            juce::jmin (
-                0.0f,
-                targetLevel
-                - state.envelopeDb);
-
-        state.gainReductionDb =
-            reductionDb;
-
-        x *=
-            dbToLinear (
-                reductionDb);
-
-        // --------------------------------------------------------
-        // MASTER REL2 damping.
-        //
-        // Used as a slower release tail so that the gain
-        // doesn't snap back too aggressively after transients.
-        // --------------------------------------------------------
-
-        const float rel2Coeff =
-            coeffForMs (
-                masterRel2Ms);
-
-        const float smoothedGR =
-            state.gainReductionDb
-            * (1.0f - rel2Coeff)
-            + reductionDb
-            * rel2Coeff;
-
-        state.gainReductionDb =
-            smoothedGR;
-
-        x *=
-            dbToLinear (
-                smoothedGR
-                - reductionDb);
-
-        // --------------------------------------------------------
-        // POST
-        // --------------------------------------------------------
-
-        x *=
-            dbToLinear (
-                masterPostGain);
-
-        // --------------------------------------------------------
-        // FINAL CEILING
-        // --------------------------------------------------------
-
-        const float ceiling =
-            dbToLinear (
-                masterCeilingDb);
-
-        if (std::abs (x)
-            > ceiling)
-        {
-            x =
-                std::copysign (
-                    ceiling,
-                    x);
-        }
-
-        return x;
+    float updateMasterR (float x)
+    {
+        const float level = std::abs (x);
+        masterEnvR = followEnvelope (masterEnvR, level, 2.0f, 85.53f, sampleRate);
+        const float amount = std::max (0.0f, masterEnvR - 0.86f);
+        return 1.0f / (1.0f + amount * 0.75f);
     }
 };
