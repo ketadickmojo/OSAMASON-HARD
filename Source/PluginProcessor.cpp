@@ -32,7 +32,7 @@ VocalChainOneProcessor::createLayout()
     std::vector<std::unique_ptr<RangedAudioParameter>> params;
 
     // ============================================================
-    // MAIN VOCAL CHAIN
+    // MAIN CHAIN
     // ============================================================
 
     params.push_back (
@@ -91,13 +91,19 @@ VocalChainOneProcessor::createLayout()
 
     params.push_back (
         std::make_unique<AudioParameterBool>(
-            ParameterID { "autotuneEnabled", 1 },
+            ParameterID {
+                "autotuneEnabled",
+                1
+            },
             "Auto-Tune Enabled",
             false));
 
     params.push_back (
         std::make_unique<AudioParameterChoice>(
-            ParameterID { "autotuneKey", 1 },
+            ParameterID {
+                "autotuneKey",
+                1
+            },
             "Auto-Tune Key",
             StringArray
             {
@@ -118,7 +124,10 @@ VocalChainOneProcessor::createLayout()
 
     params.push_back (
         std::make_unique<AudioParameterChoice>(
-            ParameterID { "autotuneScale", 1 },
+            ParameterID {
+                "autotuneScale",
+                1
+            },
             "Auto-Tune Scale",
             StringArray
             {
@@ -130,7 +139,10 @@ VocalChainOneProcessor::createLayout()
 
     params.push_back (
         std::make_unique<AudioParameterFloat>(
-            ParameterID { "autotuneRetune", 1 },
+            ParameterID {
+                "autotuneRetune",
+                1
+            },
             "Auto-Tune Retune Speed",
             NormalisableRange<float> (
                 0.0f,
@@ -140,7 +152,10 @@ VocalChainOneProcessor::createLayout()
 
     params.push_back (
         std::make_unique<AudioParameterFloat>(
-            ParameterID { "autotuneAmount", 1 },
+            ParameterID {
+                "autotuneAmount",
+                1
+            },
             "Auto-Tune Amount",
             NormalisableRange<float> (
                 0.0f,
@@ -162,7 +177,8 @@ void VocalChainOneProcessor::prepareToPlay (
     double sampleRate,
     int samplesPerBlock)
 {
-    currentSampleRate = sampleRate;
+    currentSampleRate =
+        sampleRate;
 
     // ============================================================
     // AUTO-TUNE
@@ -186,13 +202,23 @@ void VocalChainOneProcessor::prepareToPlay (
 
     for (auto& c : chains)
     {
-        c.correctionEq.prepare (spec);
-        c.limiter.prepare (sampleRate);
-        c.eq7.prepare (spec);
-        c.compressor.prepare (sampleRate);
-        c.soundgoodizer.prepare (sampleRate);
-        c.fastDist.prepare (sampleRate);
-        c.freshAir.prepare (spec);
+        c.correctionEq.prepare (
+            spec);
+
+        c.limiter.prepare (
+            sampleRate);
+
+        c.eq7.prepare (
+            spec);
+
+        c.compressor.prepare (
+            sampleRate);
+
+        c.fastDist.prepare (
+            sampleRate);
+
+        c.freshAir.prepare (
+            spec);
     }
 
     // ============================================================
@@ -207,14 +233,20 @@ void VocalChainOneProcessor::prepareToPlay (
         2
     };
 
-    flangus.prepare (stereoSpec);
-    reverb.prepare (stereoSpec);
+    soundgoodizer.prepare (
+        sampleRate);
+
+    flangus.prepare (
+        stereoSpec);
+
+    reverb.prepare (
+        stereoSpec);
 
     updateAllStages();
 }
 
 // ================================================================
-// UPDATE PARAMETERS
+// UPDATE
 // ================================================================
 
 void VocalChainOneProcessor::updateAllStages()
@@ -236,12 +268,13 @@ void VocalChainOneProcessor::updateAllStages()
             "space")->load();
 
     // ============================================================
-    // AUTO-TUNE PARAMETERS
+    // AUTO-TUNE
     // ============================================================
 
     const bool autoTuneEnabled =
         apvts.getRawParameterValue (
-            "autotuneEnabled")->load() > 0.5f;
+            "autotuneEnabled")->load()
+        > 0.5f;
 
     const int autoTuneKey =
         static_cast<int> (
@@ -268,11 +301,12 @@ void VocalChainOneProcessor::updateAllStages()
         autoTuneKey);
 
     autoTune.setScale (
-        static_cast<AutoTuneEngine::ScaleType> (
-            juce::jlimit (
-                0,
-                2,
-                autoTuneScale)));
+        static_cast<
+            AutoTuneEngine::ScaleType> (
+                juce::jlimit (
+                    0,
+                    2,
+                    autoTuneScale)));
 
     autoTune.setRetuneSpeed (
         autoTuneRetune);
@@ -286,33 +320,54 @@ void VocalChainOneProcessor::updateAllStages()
 
     for (auto& c : chains)
     {
-        // 1. Initial Correction EQ
-        c.correctionEq.update (tone);
+        // 1. Correction EQ
+        c.correctionEq.update (
+            tone);
 
-        // 2. Fruity Limiter
+        // 2. Limiter
         c.limiter.update();
 
-        // 3. Vocal Parametric EQ
-        c.eq7.update (tone);
+        // 3. EQ
+        c.eq7.update (
+            tone);
 
-        // 4. Vintage Compressor
-        c.compressor.update (punch);
+        // 4. Compressor
+        c.compressor.update (
+            punch);
 
-        // 5. Soundgoodizer C
-        c.soundgoodizer.update (45.0f);
+        // 5. Fast Dist
+        c.fastDist.update (
+            grit);
 
-        // 6. Fast Dist
-        c.fastDist.update (grit);
-
-        // 7. Fresh Air
-        c.freshAir.update (tone);
+        // 6. Fresh Air
+        c.freshAir.update (
+            tone);
     }
 
-    // 8. Flangus
-    flangus.update (space);
+    // ============================================================
+    // 5. SOUNDGOODIZER C
+    //
+    // Fixed original Soundgoodizer amount = 45%.
+    //
+    // This is LMH MIX, not compressor intensity.
+    // ============================================================
 
-    // 9. Reverb
-    reverb.update (space);
+    soundgoodizer.update (
+        45.0f);
+
+    // ============================================================
+    // FLANGUS
+    // ============================================================
+
+    flangus.update (
+        space);
+
+    // ============================================================
+    // REVERB
+    // ============================================================
+
+    reverb.update (
+        space);
 }
 
 // ================================================================
@@ -362,7 +417,8 @@ void VocalChainOneProcessor::processBlock (
     // ============================================================
 
     auto* left =
-        buffer.getWritePointer (0);
+        buffer.getWritePointer (
+            0);
 
     auto* right =
         numChannels > 1
@@ -370,7 +426,13 @@ void VocalChainOneProcessor::processBlock (
             : nullptr;
 
     // ============================================================
-    // 2-7. MONO PER-CHANNEL PROCESSING
+    // 2. CORRECTION EQ
+    // 3. LIMITER
+    // 4. EQ
+    // 5. COMPRESSOR
+    //
+    // We stop BEFORE Soundgoodizer because Soundgoodizer is now
+    // a genuine stereo pair processor.
     // ============================================================
 
     for (int i = 0;
@@ -386,34 +448,33 @@ void VocalChainOneProcessor::processBlock (
                 left[i];
 
             x =
-                chains[0].correctionEq
-                    .processSample (0, x);
+                chains[0]
+                    .correctionEq
+                    .processSample (
+                        0,
+                        x);
 
             x =
-                chains[0].limiter
-                    .processSample (x);
+                chains[0]
+                    .limiter
+                    .processSample (
+                        x);
 
             x =
-                chains[0].eq7
-                    .processSample (0, x);
+                chains[0]
+                    .eq7
+                    .processSample (
+                        0,
+                        x);
 
             x =
-                chains[0].compressor
-                    .processSample (x);
+                chains[0]
+                    .compressor
+                    .processSample (
+                        x);
 
-            x =
-                chains[0].soundgoodizer
-                    .processSample (x);
-
-            x =
-                chains[0].fastDist
-                    .processSample (x);
-
-            x =
-                chains[0].freshAir
-                    .processSample (0, x);
-
-            left[i] = x;
+            left[i] =
+                x;
         }
 
         // --------------------------------------------------------
@@ -426,34 +487,143 @@ void VocalChainOneProcessor::processBlock (
                 right[i];
 
             x =
-                chains[1].correctionEq
-                    .processSample (0, x);
+                chains[1]
+                    .correctionEq
+                    .processSample (
+                        0,
+                        x);
 
             x =
-                chains[1].limiter
-                    .processSample (x);
+                chains[1]
+                    .limiter
+                    .processSample (
+                        x);
 
             x =
-                chains[1].eq7
-                    .processSample (0, x);
+                chains[1]
+                    .eq7
+                    .processSample (
+                        0,
+                        x);
 
             x =
-                chains[1].compressor
-                    .processSample (x);
+                chains[1]
+                    .compressor
+                    .processSample (
+                        x);
+
+            right[i] =
+                x;
+        }
+    }
+
+    // ============================================================
+    // 5. SOUNDGOODIZER C
+    //
+    // Full stereo pair processing:
+    //
+    // LOW  -> MERGED 75%
+    // MID  -> SEPARATION 35%
+    // HIGH -> unchanged
+    //
+    // Then LMH MIX = 45%.
+    // ============================================================
+
+    if (right != nullptr)
+    {
+        for (int i = 0;
+             i < numSamples;
+             ++i)
+        {
+            float l =
+                left[i];
+
+            float r =
+                right[i];
+
+            soundgoodizer.processStereo (
+                l,
+                r);
+
+            left[i] =
+                l;
+
+            right[i] =
+                r;
+        }
+    }
+    else
+    {
+        // Fallback for mono buffers.
+        for (int i = 0;
+             i < numSamples;
+             ++i)
+        {
+            left[i] =
+                soundgoodizer.processSample (
+                    0,
+                    left[i]);
+        }
+    }
+
+    // ============================================================
+    // 6. FAST DIST
+    // 7. FRESH AIR
+    // ============================================================
+
+    for (int i = 0;
+         i < numSamples;
+         ++i)
+    {
+        // --------------------------------------------------------
+        // LEFT
+        // --------------------------------------------------------
+
+        {
+            float x =
+                left[i];
 
             x =
-                chains[1].soundgoodizer
-                    .processSample (x);
+                chains[0]
+                    .fastDist
+                    .processSample (
+                        x);
 
             x =
-                chains[1].fastDist
-                    .processSample (x);
+                chains[0]
+                    .freshAir
+                    .processSample (
+                        0,
+                        x);
+
+            left[i] =
+                x;
+        }
+
+        // --------------------------------------------------------
+        // RIGHT
+        // --------------------------------------------------------
+
+        if (right != nullptr)
+        {
+            float x =
+                right[i];
 
             x =
-                chains[1].freshAir
-                    .processSample (0, x);
+                chains[1]
+                    .fastDist
+                    .processSample (
+                        x);
 
-            right[i] = x;
+            x =
+                chains[1]
+                    .freshAir
+                    .processSample (
+                        0,
+                        x);
+
+            right[i] =
+                x;
         }
     }
 
@@ -479,10 +649,12 @@ void VocalChainOneProcessor::processBlock (
              ++ch)
         {
             auto* wet =
-                buffer.getWritePointer (ch);
+                buffer.getWritePointer (
+                    ch);
 
             const auto* dry =
-                dryCopy.getReadPointer (ch);
+                dryCopy.getReadPointer (
+                    ch);
 
             for (int i = 0;
                  i < numSamples;
@@ -520,10 +692,12 @@ void VocalChainOneProcessor::processBlock (
              ++ch)
         {
             auto* wet =
-                buffer.getWritePointer (ch);
+                buffer.getWritePointer (
+                    ch);
 
             const auto* dry =
-                dryCopy.getReadPointer (ch);
+                dryCopy.getReadPointer (
+                    ch);
 
             for (int i = 0;
                  i < numSamples;
@@ -540,13 +714,13 @@ void VocalChainOneProcessor::processBlock (
     }
 
     // ============================================================
-    // FINAL OUTPUT GAIN
+    // FINAL LOUDNESS
     //
     // 0   -> -6 dB
     // 50  ->  0 dB
     // 100 -> +6 dB
     //
-    // Loudness does NOT control the limiter.
+    // Does NOT touch limiter.
     // ============================================================
 
     const float loudness =
