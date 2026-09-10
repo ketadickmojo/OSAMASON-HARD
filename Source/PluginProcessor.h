@@ -89,19 +89,17 @@ public:
     bool isBusesLayoutSupported (
         const BusesLayout& layouts) const override;
 
-    // ============================================================
-    // PARAMETERS
-    // ============================================================
-
     juce::AudioProcessorValueTreeState apvts;
 
 private:
-    juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+
+    juce::AudioProcessorValueTreeState::ParameterLayout
+    createLayout();
 
     void updateAllStages();
 
     // ============================================================
-    // MAIN VOCAL CHAIN
+    // MAIN CHAIN
     //
     // Auto-Tune
     //      ↓
@@ -113,7 +111,7 @@ private:
     //      ↓
     // Compressor
     //      ↓
-    // Soundgoodizer
+    // Soundgoodizer C  <-- full stereo pair
     //      ↓
     // Fast Dist
     //      ↓
@@ -132,13 +130,12 @@ private:
         SimpleLimiter limiter;
         VocalParametricEQ7 eq7;
         VintageCompressor compressor;
-        SoundgoodizerC soundgoodizer;
         FastDistStage fastDist;
         FreshAirStage freshAir;
     };
 
     // ============================================================
-    // AUTO-TUNE ENGINE
+    // AUTO-TUNE
     // ============================================================
 
     AutoTuneEngine autoTune;
@@ -149,11 +146,21 @@ private:
 
     ChannelChain chains[2];
 
-    // Stereo processing after the per-channel section.
+    // ============================================================
+    // STEREO SOUNDGOODIZER
+    // ============================================================
+
+    SoundgoodizerC soundgoodizer;
+
+    // ============================================================
+    // STEREO EFFECTS
+    // ============================================================
+
     FlangusStage flangus;
     ReverbStage reverb;
 
-    double currentSampleRate = 44100.0;
+    double currentSampleRate =
+        44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (
         VocalChainOneProcessor)
